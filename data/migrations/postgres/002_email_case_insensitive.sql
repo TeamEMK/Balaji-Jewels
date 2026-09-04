@@ -1,0 +1,17 @@
+-- Email ko case ke lihaaz se ek maano.
+--
+-- MySQL ka default collation (utf8mb4_0900_ai_ci) case-insensitive tha, isliye
+-- `WHERE email = 'rajesh@gmail.com'` "Rajesh@Gmail.com" wale row se bhi match
+-- kar jaata tha. Postgres me `=` case-sensitive hai, to Postgres par aate hi
+-- jis bande ka email capital letters ke saath saved hai wo lowercase type
+-- karke login nahi kar paata — aur error bas "Invalid email or password"
+-- aata hai, jisse asli wajah dikhti bhi nahi.
+--
+-- Code ki taraf saare email lookups ab LOWER() se hote hain. Ye index us
+-- niyam ko DB me bhi pakka karta hai (warna a@x.com aur A@x.com dono ban
+-- jaate, aur login me se hamesha ek hi milta), saath hi un lookups ko tez
+-- bhi rakhta hai.
+--
+-- Purani case-sensitive UNIQUE (email) rehne di hai — ye uske upar ek aur
+-- sakht shart hai, uska badal nahi.
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_uq ON users (LOWER(email));
