@@ -34,6 +34,7 @@ const DIALECT = pickDialect();
 
 let create = null;
 if (DIALECT === 'postgres') create = require('./db-postgres');
+if (DIALECT === 'mysql')    create = require('./db-mysql');
 
 if (!create) {
   throw new Error(

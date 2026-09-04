@@ -1,0 +1,25 @@
+-- Email ko case ke lihaaz se ek maano.
+--
+-- Postgres par ye migration `CREATE UNIQUE INDEX ON users (LOWER(email))`
+-- banati hai, kyunki wahan `=` case-sensitive hai — jis bande ka email capital
+-- letters me saved hai wo lowercase type karke login nahi kar paata tha.
+--
+-- MySQL par ye zarurat hai hi nahi. 001_init.sql me users table
+-- utf8mb4_unicode_ci collation par banti hai, jo khud case-insensitive hai.
+-- Yaani:
+--   * `WHERE LOWER(email) = ?` wale saare lookups pehle se sahi chalte hain
+--   * `UNIQUE (email)` khud hi a@x.com aur A@x.com ko ek saath nahi banne deta
+--     — yaani wahi shart jo Postgres par functional index lagata hai
+--
+-- Functional index (`(LOWER(email))`) yahan jaan-boojh kar NAHI banaya:
+--   1. Wo kuch naya rok nahi raha — collation pehle hi rok rahi hai.
+--   2. MySQL 8.0.13 se pehle functional index hai hi nahi, aur shared hosting
+--      par version pehle se pata nahi hota. Fail hone par poori migration
+--      wahin ruk jaati (aur MySQL me DDL rollback bhi nahi hota).
+--
+-- users table chhoti hai (~95 rows), isliye LOWER(email) par index na hone se
+-- login ki speed par koi farak nahi padta.
+--
+-- Ye file jaan-boojh kar khaali hai — sirf itna ki migration darj ho jaye aur
+-- dono dialect ka kram ek jaisa rahe.
+SELECT 1;
