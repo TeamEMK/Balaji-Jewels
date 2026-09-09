@@ -2616,13 +2616,12 @@ const CSV_FREQ_MAP = {
   daily:'daily', weekly:'weekly', monthly:'monthly', yearly:'yearly', quarterly:'quarterly',
   alternative_week:'alternative_week', fortnightly:'alternative_week', alternate_week:'alternative_week'
 };
-// Date: DD/MM/YYYY, D/M/YYYY ya YYYY-MM-DD dono
-function csvDateToISO(v) {
-  v = (v||'').trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-  const p = v.split(/[\/\-.]/).map(x=>x.trim());
-  if (p.length === 3 && p[0].length <= 2) return `${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
-  return null;
+// Date: DD/MM/YYYY, MM/DD/YYYY (order file se auto-detect, delegation wale csvDateToISOSmart jaisa),
+// YYYY-MM-DD/YYYY/MM/DD (year kisi bhi separator ke saath), aur trailing time (" 19:00") bhi strip
+// karo — checklist me sirf date chahiye, time se koi matlab nahi.
+function csvDateToISO(v, order) {
+  v = (v||'').trim().replace(/\s+\d{1,2}:\d{2}(:\d{2})?\s*$/, ''); // trailing "HH:MM" hata do
+  return csvDateToISOSmart(v, order || 'DM');
 }
 
 async function uploadCSVC() {
@@ -2639,10 +2638,10 @@ async function uploadCSVC() {
     const headerCells = allRows[0].map(h => (h||'').trim().toLowerCase().replace(/\s+/g,'_'));
     const findCol = (...names) => { for (const n of names) { const i = headerCells.indexOf(n); if (i !== -1) return i; } return -1; };
     const iEmail = findCol('user_email','email','doer_email');
-    const iName  = findCol('name','employee','employee_name');
+    const iName  = findCol('name','employee','employee_name','doer_name','doer','staff','staff_name');
     const iFreq  = findCol('frequency','freq');
     const iDesc  = findCol('description','task','task_name');
-    const iDate  = findCol('due_date','start_date','next_due_date','new_date','date');
+    const iDate  = findCol('due_date','start_date','next_due_date','new_date','date','day/date','day_date');
     const iRemarks = findCol('remarks','remark');
 
     if (iFreq === -1 || iDesc === -1 || iDate === -1 || (iEmail === -1 && iName === -1)) {
@@ -2652,31 +2651,34 @@ async function uploadCSVC() {
 
     const dataLines = allRows.slice(1).filter(r => r.some(f => (f||'').trim()));
     const allUsers = await api('/api/users');
+    const dateOrderC = resolveDateOrder(dataLines.map(r => (r[iDate]||'').trim().replace(/\s+\d{1,2}:\d{2}(:\d{2})?\s*$/, '')));
 
     let totalTasks = 0, skipped = 0;
+    const skipReasonsC = [];
     showToast('⏳ Generating tasks, please wait…');
 
-    for (const row of dataLines) {
+    for (const [idx, row] of dataLines.entries()) {
       const g = i => (i === -1 ? '' : (row[i]||'').trim());
       const email = g(iEmail), name = g(iName);
       const freq = CSV_FREQ_MAP[g(iFreq).toLowerCase()];
       const description = g(iDesc);
-      const isoStart = csvDateToISO(g(iDate));
-      if (!description || !freq || !isoStart) { skipped++; continue; }
+      const isoStart = csvDateToISO(g(iDate), dateOrderC);
+      if (!description || !freq || !isoStart) { skipped++; skipReasonsC.push(`Row ${idx+2}: missing/invalid description, frequency ("${g(iFreq)}") or date ("${g(iDate)}")`); continue; }
 
       // user match: pehle email se, warna name se
       let user = email ? allUsers.find(u => (u.email||'').toLowerCase() === email.toLowerCase()) : null;
       if (!user && name) user = allUsers.find(u => (u.name||'').toLowerCase() === name.toLowerCase());
-      if (!user) { skipped++; continue; }
+      if (!user) { skipped++; skipReasonsC.push(`Row ${idx+2}: no user found for "${email||name}"`); continue; }
 
       const dates = generateDates(isoStart, freq, user.week_off||'', user.extra_off||'');
-      if (!dates.length) { skipped++; continue; }
+      if (!dates.length) { skipped++; skipReasonsC.push(`Row ${idx+2}: no valid dates generated from "${isoStart}"`); continue; }
       const result = await api('/api/tasks/bulk-checklist','POST',{
         desc: description, assignedTo: user.id, priority: 'low', remarks: g(iRemarks), dates, frequency: freq
       });
-      if (!result.error) totalTasks += dates.length; else skipped++;
+      if (!result.error) totalTasks += dates.length; else { skipped++; skipReasonsC.push(`Row ${idx+2}: server error — ${result.error}`); }
     }
 
+    if (skipReasonsC.length) console.warn('Checklist CSV upload skipped rows:', skipReasonsC);
     showToast(`✅ ${totalTasks} tasks generated!${skipped ? ` (${skipped} rows skipped)` : ''}`);
     document.getElementById('bulkFileC').value = '';
     closeModal('checklistModal');
