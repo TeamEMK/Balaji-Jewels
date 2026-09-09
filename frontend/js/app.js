@@ -2538,14 +2538,17 @@ async function uploadCSV() {
     if (!rows.length) { showToast('CSV is empty','error'); return; }
     const allUsers = await api('/api/users');
     let count = 0, skipped = 0;
-    for (const row of rows) {
+    const skipReasons = [];
+    for (const [idx, row] of rows.entries()) {
       const [doer_email,approver_email,due_date,priority,approval,description,remarks] = row.map(s=>(s||'').trim());
-      if (!doer_email||!description) { skipped++; continue; }
-      const doer = allUsers.find(u=>u.email===doer_email);
-      if (!doer) { skipped++; continue; }
+      if (!doer_email||!description) { skipped++; skipReasons.push(`Row ${idx+2}: missing doer_email or description`); continue; }
+      // Email match case-insensitive rakho — sheet aur DB me casing alag ho sakti hai (uploadCSVC ki tarah)
+      const doer = allUsers.find(u=>(u.email||'').toLowerCase()===doer_email.toLowerCase());
+      if (!doer) { skipped++; skipReasons.push(`Row ${idx+2}: no user found for "${doer_email}"`); continue; }
       await api('/api/tasks','POST',{type:'delegation',desc:description,assignedTo:doer.id,approverEmail:approver_email,date:due_date,priority,approval,remarks});
       count++;
     }
+    if (skipReasons.length) console.warn('CSV upload skipped rows:', skipReasons);
     showToast(`✅ ${count} tasks uploaded! ${skipped?`(${skipped} skipped)`:''}`);
     document.getElementById('bulkFile').value = '';
     closeModal('delegateModal');
