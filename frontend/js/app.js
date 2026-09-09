@@ -2506,7 +2506,17 @@ function downloadFile(content, filename) {
 }
 
 // Proper CSV parser — handles quoted fields with embedded commas/newlines (naive split(',') breaks on these)
-function parseCSVRows(text) {
+// Delimiter auto-detect bhi karta hai: Excel se "Tab delimited text" ko .csv naam se save karne par
+// header me comma bilkul nahi hota, tab hote hain — us case me sab kuch ek hi field me collapse ho
+// jaata tha aur poori file skip ho jaati thi. Header ki pehli line dekh ke tab vs comma decide karo.
+function detectCSVDelimiter(text) {
+  const headerLine = text.split(/\r?\n/, 1)[0] || '';
+  const tabs = (headerLine.match(/\t/g) || []).length;
+  const commas = (headerLine.match(/,/g) || []).length;
+  return tabs > commas ? '\t' : ',';
+}
+function parseCSVRows(text, delimiter) {
+  const delim = delimiter || detectCSVDelimiter(text);
   const rows = [];
   let row = [], field = '', inQuotes = false;
   for (let i = 0; i < text.length; i++) {
@@ -2516,7 +2526,7 @@ function parseCSVRows(text) {
       else field += c;
     } else {
       if (c === '"') inQuotes = true;
-      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === delim) { row.push(field); field = ''; }
       else if (c === '\r') { /* skip */ }
       else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
       else field += c;
