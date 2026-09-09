@@ -2536,6 +2536,37 @@ function parseCSVRows(text, delimiter) {
   return rows;
 }
 
+// CSV ki due_date poori file me consistent order (DD/MM ya MM/DD) me hoti hai — Excel ka
+// date format Windows locale par depend karta hai. Jahan bhi ek part 12 se zyada mile wahan
+// se order clearly pata chal jaata hai (e.g. 10/28/2025 me 28 month nahi ho sakta => MM/DD);
+// wahi order poori file par consistently apply karo taaki ambiguous rows (07/07) bhi sahi bane.
+function resolveDateOrder(dateStrings) {
+  let mdVotes = 0, dmVotes = 0;
+  for (const v of dateStrings) {
+    const s = (v||'').trim();
+    if (!s || /^\d{4}-\d{2}-\d{2}$/.test(s)) continue;
+    const p = s.split(/[\/\-.]/).map(x=>x.trim());
+    if (p.length !== 3) continue;
+    const a = parseInt(p[0],10), b = parseInt(p[1],10);
+    if (isNaN(a) || isNaN(b)) continue;
+    if (a > 12) dmVotes++;
+    else if (b > 12) mdVotes++;
+  }
+  return mdVotes >= dmVotes ? 'MD' : 'DM'; // koi clear evidence na mile to MM/DD (Excel/US default)
+}
+function csvDateToISOSmart(v, order) {
+  v = (v||'').trim();
+  if (!v) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  const p = v.split(/[\/\-.]/).map(x=>x.trim());
+  if (p.length !== 3) return null;
+  const [a,b,y] = p;
+  const day = order === 'MD' ? b : a;
+  const month = order === 'MD' ? a : b;
+  if (!/^\d{1,2}$/.test(day) || !/^\d{1,2}$/.test(month) || !/^\d{4}$/.test(y)) return null;
+  return `${y}-${month.padStart(2,'0')}-${day.padStart(2,'0')}`;
+}
+
 async function uploadCSV() {
   const file = document.getElementById('bulkFile').files[0];
   if (!file) { showToast('Please select a CSV file','error'); return; }
@@ -2547,6 +2578,7 @@ async function uploadCSV() {
     const rows = parseCSVRows(text).slice(1).filter(r => r.some(f => (f||'').trim()));
     if (!rows.length) { showToast('CSV is empty','error'); return; }
     const allUsers = await api('/api/users');
+    const dateOrder = resolveDateOrder(rows.map(r => (r[2]||'').trim()));
     let count = 0, skipped = 0;
     const skipReasons = [];
     for (const [idx, row] of rows.entries()) {
@@ -2555,7 +2587,10 @@ async function uploadCSV() {
       // Email match case-insensitive rakho — sheet aur DB me casing alag ho sakti hai (uploadCSVC ki tarah)
       const doer = allUsers.find(u=>(u.email||'').toLowerCase()===doer_email.toLowerCase());
       if (!doer) { skipped++; skipReasons.push(`Row ${idx+2}: no user found for "${doer_email}"`); continue; }
-      await api('/api/tasks','POST',{type:'delegation',desc:description,assignedTo:doer.id,approverEmail:approver_email,date:due_date,priority,approval,remarks});
+      const isoDate = csvDateToISOSmart(due_date, dateOrder);
+      if (!isoDate) { skipped++; skipReasons.push(`Row ${idx+2}: invalid due_date "${due_date}"`); continue; }
+      const result = await api('/api/tasks','POST',{type:'delegation',desc:description,assignedTo:doer.id,approverEmail:approver_email,date:isoDate,priority,approval,remarks});
+      if (result && result.error) { skipped++; skipReasons.push(`Row ${idx+2}: server error — ${result.error}`); continue; }
       count++;
     }
     if (skipReasons.length) console.warn('CSV upload skipped rows:', skipReasons);
