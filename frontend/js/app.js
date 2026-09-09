@@ -2537,16 +2537,18 @@ function parseCSVRows(text, delimiter) {
 }
 
 // CSV ki due_date poori file me consistent order (DD/MM ya MM/DD) me hoti hai — Excel ka
-// date format Windows locale par depend karta hai. Jahan bhi ek part 12 se zyada mile wahan
-// se order clearly pata chal jaata hai (e.g. 10/28/2025 me 28 month nahi ho sakta => MM/DD);
-// wahi order poori file par consistently apply karo taaki ambiguous rows (07/07) bhi sahi bane.
+// date format Windows locale par depend karta hai, aur dobara save karne par khud badal bhi
+// sakta hai (dash <-> slash, ya year pehle/aakhri). Sirf un dates se order nikaalo jahan saal
+// aakhri me ho aur ek part 12 se zyada ho (e.g. 10/28/2025 me 28 month nahi ho sakta => MM/DD);
+// wahi order poori file (ambiguous rows jaise 07/07 sameet) par consistently apply karo.
+// Saal-pehle wali dates (2025-10-28 ya 2025/10/28) ko order ki zaroorat hi nahi — wahan hamesha
+// year-month-day hi hota hai, kabhi year-day-month nahi.
 function resolveDateOrder(dateStrings) {
   let mdVotes = 0, dmVotes = 0;
   for (const v of dateStrings) {
     const s = (v||'').trim();
-    if (!s || /^\d{4}-\d{2}-\d{2}$/.test(s)) continue;
     const p = s.split(/[\/\-.]/).map(x=>x.trim());
-    if (p.length !== 3) continue;
+    if (p.length !== 3 || p[0].length === 4) continue; // year-first — order irrelevant, skip
     const a = parseInt(p[0],10), b = parseInt(p[1],10);
     if (isNaN(a) || isNaN(b)) continue;
     if (a > 12) dmVotes++;
@@ -2557,13 +2559,18 @@ function resolveDateOrder(dateStrings) {
 function csvDateToISOSmart(v, order) {
   v = (v||'').trim();
   if (!v) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
   const p = v.split(/[\/\-.]/).map(x=>x.trim());
   if (p.length !== 3) return null;
-  const [a,b,y] = p;
-  const day = order === 'MD' ? b : a;
-  const month = order === 'MD' ? a : b;
+  let y, month, day;
+  if (p[0].length === 4) { // year pehle: YYYY-MM-DD ya YYYY/MM/DD, separator kuch bhi ho
+    [y, month, day] = p;
+  } else { // year aakhri: DD/MM/YYYY ya MM/DD/YYYY, detected order se decide karo
+    const [a,b] = p; y = p[2];
+    day = order === 'MD' ? b : a;
+    month = order === 'MD' ? a : b;
+  }
   if (!/^\d{1,2}$/.test(day) || !/^\d{1,2}$/.test(month) || !/^\d{4}$/.test(y)) return null;
+  if (+month < 1 || +month > 12 || +day < 1 || +day > 31) return null;
   return `${y}-${month.padStart(2,'0')}-${day.padStart(2,'0')}`;
 }
 
