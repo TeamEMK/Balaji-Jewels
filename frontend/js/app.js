@@ -172,11 +172,33 @@ let ME = null;
 let dashType = 'all';
 // Kaunsa overview card chuna hua hai — neeche wali table isi ki list dikhati hai
 let dashCard = 'pending';
-// Overview cards ka Delegation+Checklist wala hissa — FMS count (alag Google
-// Sheet call se, baad me aata hai) isi par jodha jaata hai. loadDashboard() bharta
-// hai, loadDashFMS() isi par FMS ka pending jod ke card dikhata hai.
-let _dashBasePending = 0;
-let _dashBaseCompleted = 0;
+// Overview cards (Total/Pending/Revised/Completed) — type-tab (All/Delegation/
+// Checklist/FMS) ke hisaab se dikhne chahiye, isliye teeno type ke numbers alag
+// yaad rakhte hain. loadDashboard() Delegation+Checklist bharta hai, loadDashFMS()
+// FMS ka pending (alag Google Sheet call se, baad me aata hai). renderDashOverviewCards()
+// dashType dekh ke sahi combination dikhata hai — dashTab() badalne par bhi isi
+// ko dobara bulaate hain (API se dobara fetch karne ki zaroorat nahi).
+let _dashDelStats = { pending: 0, revised: 0, completed: 0 };
+let _dashChlStats = { pending: 0, revised: 0, completed: 0 };
+let _dashFmsPending = 0;
+function renderDashOverviewCards() {
+  let pending, revised, completed;
+  if (dashType === 'delegation') {
+    ({pending, revised, completed} = _dashDelStats);
+  } else if (dashType === 'checklist') {
+    ({pending, revised, completed} = _dashChlStats);
+  } else if (dashType === 'fms') {
+    pending = _dashFmsPending; revised = 0; completed = 0;
+  } else {
+    pending = _dashDelStats.pending + _dashChlStats.pending + _dashFmsPending;
+    revised = _dashDelStats.revised + _dashChlStats.revised;
+    completed = _dashDelStats.completed + _dashChlStats.completed;
+  }
+  document.getElementById('dTotal').textContent = pending + completed;
+  document.getElementById('dPending').textContent = pending;
+  document.getElementById('dRevised').textContent = revised;
+  document.getElementById('dCompleted').textContent = completed;
+}
 let tasksType = 'delegation';
 let dashChartInst = null;
 
@@ -911,17 +933,13 @@ async function loadDashboard() {
     return;
   }
 
-  const pendingCount   = (dDel.pending||0)   + (dChl.pending||0);
-  const completedCount = (dDel.completed||0) + (dChl.completed||0);
-  // FMS ka pending count yahan available nahi (wo alag Google Sheet call se aata
-  // hai, thodi der baad loadDashFMS() resolve hoga) — base yahan yaad rakh lo,
-  // loadDashFMS() FMS ka count mil jaane par isi base par jod ke card update kar dega.
-  _dashBasePending = pendingCount;
-  _dashBaseCompleted = completedCount;
-  document.getElementById('dTotal').textContent = pendingCount + completedCount;
-  document.getElementById('dPending').textContent = pendingCount;
-  document.getElementById('dRevised').textContent = (dDel.revised||0) + (dChl.revised||0);
-  document.getElementById('dCompleted').textContent = completedCount;
+  _dashDelStats = { pending: dDel.pending||0, revised: dDel.revised||0, completed: dDel.completed||0 };
+  _dashChlStats = { pending: dChl.pending||0, revised: dChl.revised||0, completed: dChl.completed||0 };
+  // FMS ka pending abhi purana/stale ho sakta hai (loadDashFMS() thodi der baad
+  // resolve hoga aur khud ise update karega) — filter badla hai to 0 se shuru
+  // karo, warna purane employee ka FMS count naye employee ke total me chipak jaata.
+  _dashFmsPending = 0;
+  renderDashOverviewCards();
 
   if (isAdmin || isHod || isPC) {
     empFilter.style.display = 'block';
@@ -1033,6 +1051,9 @@ function dashTab(type, el) {
   dashType = type;
   document.querySelectorAll('#dashTypeTabGroup .tab').forEach(t=>t.classList.remove('active'));
   if(el) el.classList.add('active');
+  // Overview cards (Total/Pending/Revised/Completed) tab ke hisaab se turant
+  // update karo — pehle se fetched stats se, dobara API call ki zaroorat nahi.
+  renderDashOverviewCards();
 
   // FMS rows Google Sheets se aati hain, isliye alag loader. Pehli baar tab par
   // aane par "Loading…" dikhao — sheet padhne me kuch second lagte hain.
@@ -1148,11 +1169,11 @@ async function loadDashFMS() {
   const rows = data.rows || [];
   const today = new Date().toISOString().split('T')[0];
 
-  // FMS ke pending steps ko top ke overview cards me bhi jodo — warna FMS tab
-  // me tasks dikhte hain par "Total Tasks"/"Pending" card 0 dikhata reh jaata hai
-  // (wo sirf Delegation+Checklist se bharta hai, FMS ka data alag call se aata hai).
-  document.getElementById('dTotal').textContent = _dashBasePending + _dashBaseCompleted + rows.length;
-  document.getElementById('dPending').textContent = _dashBasePending + rows.length;
+  // FMS ke pending steps ka count yaad rakho aur overview cards dobara render karo
+  // — 'FMS' tab par sirf yehi count dikhega, 'All' tab par Delegation+Checklist
+  // ke saath jud ke aayega.
+  _dashFmsPending = rows.length;
+  renderDashOverviewCards();
 
   document.getElementById('dashFMSCount').textContent = rows.length ? `(${rows.length} pending)` : '';
 
