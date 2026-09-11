@@ -172,6 +172,11 @@ let ME = null;
 let dashType = 'all';
 // Kaunsa overview card chuna hua hai — neeche wali table isi ki list dikhati hai
 let dashCard = 'pending';
+// Overview cards ka Delegation+Checklist wala hissa — FMS count (alag Google
+// Sheet call se, baad me aata hai) isi par jodha jaata hai. loadDashboard() bharta
+// hai, loadDashFMS() isi par FMS ka pending jod ke card dikhata hai.
+let _dashBasePending = 0;
+let _dashBaseCompleted = 0;
 let tasksType = 'delegation';
 let dashChartInst = null;
 
@@ -908,6 +913,11 @@ async function loadDashboard() {
 
   const pendingCount   = (dDel.pending||0)   + (dChl.pending||0);
   const completedCount = (dDel.completed||0) + (dChl.completed||0);
+  // FMS ka pending count yahan available nahi (wo alag Google Sheet call se aata
+  // hai, thodi der baad loadDashFMS() resolve hoga) — base yahan yaad rakh lo,
+  // loadDashFMS() FMS ka count mil jaane par isi base par jod ke card update kar dega.
+  _dashBasePending = pendingCount;
+  _dashBaseCompleted = completedCount;
   document.getElementById('dTotal').textContent = pendingCount + completedCount;
   document.getElementById('dPending').textContent = pendingCount;
   document.getElementById('dRevised').textContent = (dDel.revised||0) + (dChl.revised||0);
@@ -1137,6 +1147,12 @@ async function loadDashFMS() {
 
   const rows = data.rows || [];
   const today = new Date().toISOString().split('T')[0];
+
+  // FMS ke pending steps ko top ke overview cards me bhi jodo — warna FMS tab
+  // me tasks dikhte hain par "Total Tasks"/"Pending" card 0 dikhata reh jaata hai
+  // (wo sirf Delegation+Checklist se bharta hai, FMS ka data alag call se aata hai).
+  document.getElementById('dTotal').textContent = _dashBasePending + _dashBaseCompleted + rows.length;
+  document.getElementById('dPending').textContent = _dashBasePending + rows.length;
 
   document.getElementById('dashFMSCount').textContent = rows.length ? `(${rows.length} pending)` : '';
 
