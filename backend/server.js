@@ -955,6 +955,7 @@ const {
   capStepNames: _capStepNames, intakeNameAt: _intakeNameAt,
   capIntakeNames: _capIntakeNames, healIntakeConfig: _healIntakeConfig,
   getSheetGid: _getSheetGid, forceCellNumber: _forceCellNumber,
+  parsePlanCellDate: _parsePlanCellDate,
 } = require('./lib/sheet-cols');
 
 // Boot par hi Google auth bana lo — pehli asli request tab tez chalti hai.
@@ -1256,7 +1257,7 @@ async function fetchSheetRows(sheet) {
 async function computeFmsStats(hodDept = '', collectPending = false) {
   const result = { perFms: [], perUser: {}, errors: [] };
   if (collectPending) result.perUserPending = {}; // uid -> [ {fmsName, stepName, planValue, planDate, isLate} ]
-  const _today = new Date().toISOString().split('T')[0];
+  const _today = _istParts().dateStr;
   const [sheets] = await db.query('SELECT * FROM fms_sheets ORDER BY fms_name ASC');
   if (!sheets.length) return result;
 
@@ -1315,14 +1316,7 @@ async function computeFmsStats(hodDept = '', collectPending = false) {
         if (planVal && !actualVal) {
           stepPending++;
           if (collectPending) {
-            // plan date parse (same logic as /api/fms-dashboard)
-            let planDate = '';
-            const dateMatch = planVal.match(/(\d{4}-\d{2}-\d{2})|(\d{2}[\/\-]\d{2}[\/\-]\d{4})/);
-            if (dateMatch) {
-              const raw = dateMatch[0];
-              if (raw.includes('-') && raw.length === 10 && raw[4] === '-') planDate = raw;
-              else { const parts = raw.split(/[\/\-]/); if (parts.length === 3) planDate = `${parts[2]}-${parts[1]}-${parts[0]}`; }
-            }
+            const { planDate } = _parsePlanCellDate(planVal);
             stepPendingRows.push({
               fmsName, stepName: step.step_name, planValue: planVal,
               planDate, isLate: !!(planDate && planDate < _today)
@@ -2347,7 +2341,7 @@ app.get('/api/fms-dashboard', requireAuth, async (req, res) => {
     const isHod = role === 'hod';
     const filterEmployee = req.query.employee;
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = _istParts().dateStr;
 
     // Determine which user IDs to show
     let targetUserIds = null; // null = all (admin)
@@ -2450,31 +2444,10 @@ app.get('/api/fms-dashboard', requireAuth, async (req, res) => {
             const actualVal = (row[actualIdx] || '').trim();
             if (!blankClean(planVal) || blankClean(actualVal)) return; // skip if no plan or already done
 
-            // Parse plan date — try to extract date from value
-            // planVal "2026-04-07" / "07/04/2026" / plain text ho sakta hai,
-            // aage " 14:30" ya " 14:30:00" jaisa time bhi laga ho sakta hai.
-            let planDate = '';
-            let planTime = '';
-            const dateMatch = planVal.match(/(\d{4}-\d{2}-\d{2})|(\d{2}[\/\-]\d{2}[\/\-]\d{4})/);
-            if (dateMatch) {
-              const raw = dateMatch[0];
-              if (raw.includes('-') && raw.length === 10 && raw[4] === '-') {
-                planDate = raw; // already YYYY-MM-DD
-              } else {
-                // DD/MM/YYYY → YYYY-MM-DD
-                const parts = raw.split(/[\/\-]/);
-                if (parts.length === 3) planDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
-              }
-              // Date ke baad kahin bhi HH:MM ya HH:MM:SS
-              const after = planVal.slice(dateMatch.index + raw.length);
-              const timeMatch = after.match(/\b(\d{1,2}):(\d{2})(?::(\d{2}))?\b/);
-              if (timeMatch) {
-                const hh = timeMatch[1].padStart(2,'0');
-                const mm = timeMatch[2];
-                const ss = timeMatch[3];
-                planTime = ss ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`;
-              }
-            }
+            // Parse plan date — planVal "2026-04-07" / "07/04/2026" / "22-Aug-2026 17:26:03"
+            // (Sheets FORMATTED_VALUE apne date format me deta hai, month-naam wala bhi ho
+            // sakta hai) / plain text ho sakta hai.
+            const { planDate, planTime } = _parsePlanCellDate(planVal);
 
             // isLate: plan date is in the past and still pending
             const isLate = planDate && planDate < today;

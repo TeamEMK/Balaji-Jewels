@@ -29,7 +29,15 @@ function idxToCol(idx) {
   return s;
 }
 
-// Date string ko Date (midnight) me — DD/MM/YYYY, DD-MM-YYYY, ya YYYY-MM-DD. Warna null.
+// "22-Aug-2026" jaisi month-naam wali date ke liye — Google Sheets ki
+// FORMATTED_VALUE (jo humesha use hoti hai) date cell ko sheet ke apne format
+// me deti hai, aur kai sheets me wo numeric DD/MM/YYYY nahi, month-naam wala
+// hota hai. Bina isko match kiye planDate hamesha khaali reh jaata (FMS
+// "isLate" chup-chaap hamesha false — dekho parsePlanCellDate neeche).
+const MONTH_ABBR = { jan:1, feb:2, mar:3, apr:4, may:5, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12 };
+
+// Date string ko Date (midnight) me — DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD, ya
+// "DD-Mon-YYYY"/"DD Mon YYYY" (month naam). Warna null.
 // FMS delay (Actual − Planned) count karne ke liye.
 function _parseDMY(v) {
   if (!v) return null;
@@ -38,7 +46,47 @@ function _parseDMY(v) {
   if (m) return new Date(+m[3], +m[2] - 1, +m[1]);
   m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
   if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+  m = s.match(/^(\d{1,2})[\-\s]([A-Za-z]{3,9})[\-\s](\d{4})/);
+  if (m) {
+    const mon = MONTH_ABBR[m[2].slice(0, 3).toLowerCase()];
+    if (mon) return new Date(+m[3], mon - 1, +m[1]);
+  }
   return null;
+}
+
+// FMS "Plan" column ki cell text se date (YYYY-MM-DD) + time (HH:MM[:SS]) nikalo.
+// Sheet me date ke saath time bhi laga ho sakta hai (e.g. "22-Aug-2026 17:26:03").
+// /api/fms-dashboard aur FMS pending-popup dono isi ko use karte hain — pehle
+// dono jagah ye regex alag-alag likha tha, aur ISO/DD-MM-YYYY hi pakadta tha,
+// month-naam wali date par chup-chaap khaali reh jaata (isLate hamesha false).
+function _parsePlanCellDate(v) {
+  const planVal = (v || '').toString().trim();
+  let planDate = '', planTime = '';
+  const dateMatch = planVal.match(/(\d{4}-\d{2}-\d{2})|(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})|(\d{1,2}[\-\s][A-Za-z]{3,9}[\-\s]\d{4})/);
+  if (dateMatch) {
+    const raw = dateMatch[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      planDate = raw; // already YYYY-MM-DD
+    } else if (/[A-Za-z]/.test(raw)) {
+      const m = raw.match(/^(\d{1,2})[\-\s]([A-Za-z]{3,9})[\-\s](\d{4})$/);
+      const mon = m && MONTH_ABBR[m[2].slice(0, 3).toLowerCase()];
+      if (mon) planDate = `${m[3]}-${String(mon).padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+    } else {
+      // DD/MM/YYYY ya DD-MM-YYYY → YYYY-MM-DD
+      const parts = raw.split(/[\/\-]/);
+      if (parts.length === 3) planDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+    // Date ke baad kahin bhi HH:MM ya HH:MM:SS
+    const after = planVal.slice(dateMatch.index + raw.length);
+    const timeMatch = after.match(/\b(\d{1,2}):(\d{2})(?::(\d{2}))?\b/);
+    if (timeMatch) {
+      const hh = timeMatch[1].padStart(2, '0');
+      const mm = timeMatch[2];
+      const ss = timeMatch[3];
+      planTime = ss ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`;
+    }
+  }
+  return { planDate, planTime };
 }
 
 // DD/MM/YYYY date me din add/subtract karke wapas DD/MM/YYYY. Parse fail → null.
@@ -198,6 +246,7 @@ async function _forceCellNumber(sheetsApi, spreadsheetId, tabName, colIdx, rowNu
 module.exports = {
   colToIdx, idxToCol,
   parseDMY: _parseDMY, addDaysDMY: _addDaysDMY, derivedOffset: _derivedOffset,
+  parsePlanCellDate: _parsePlanCellDate,
   findColByNameNear: _findColByNameNear, fetchSheetHeaders: _fetchSheetHeaders,
   healStepCols: _healStepCols, capStepNames: _capStepNames,
   intakeNameAt: _intakeNameAt, capIntakeNames: _capIntakeNames,
