@@ -131,13 +131,30 @@ async function runMigrations({ throwOnFail = true, log = console.log } = {}) {
         applied++;
       } catch (e) {
         await db.rollback().catch(() => {});
+        // "Already exists" class ki error — is migration ka kaam pehle se hi
+        // maujood hai. Aam taur par tab hota hai jab database phpMyAdmin/raw
+        // SQL se seedha set up hua ho (schema_migrations kabhi bhara hi nahi),
+        // isliye 001_init.sql jaisi purani migration "pending" dikhti hai par
+        // uske tables/columns pehle se hain. Usse hard-fail maan ke rukne se
+        // 001 hamesha atka reh jaata aur 005+ (asli naye) kabhi kabhi nahi
+        // lagte — isliye "already applied" maan ke done mark karo, aage badho.
+        const ALREADY_EXISTS = new Set([
+          'ER_TABLE_EXISTS_ERROR', 'ER_DUP_FIELDNAME', 'ER_DUP_KEYNAME', // mysql
+          '42P07', '42701', '42P06', '42710',                            // postgres
+        ]);
+        if (!throwOnFail && ALREADY_EXISTS.has(e.code)) {
+          log(`  ⏭️  migration ${f} — already applied outside migrate.js (${e.code}), marking done`);
+          await db.markDone(f).catch(() => {});
+          continue;
+        }
         const hint = DIALECT === 'mysql'
           ? ' (MySQL me DDL rollback nahi hota — aadhi tables ban chuki hongi.)'
           : '';
         log(`  ❌ migration ${f} failed: ${e.message}${hint}`);
         if (throwOnFail) throw e;
-        // Server-boot mode: is file ko chhod ke aage mat badho — baaki files
-        // isi par depend kar sakti hain, galat kram me lagana asli nuksaan hai.
+        // Server-boot mode, koi aur (genuine) error — is file ko chhod ke
+        // aage mat badho, baaki files isi par depend kar sakti hain, galat
+        // kram me lagana asli nuksaan hai.
         break;
       }
     }
