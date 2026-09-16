@@ -68,6 +68,10 @@
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
       <span class="nav-label-text">Leave</span>
     </div>
+    <div class="nav-item" id="nav-payroll" style="display:none" onclick="navigate('payroll',this)">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a4 4 0 00-4-4H7a4 4 0 00-4 4v10a4 4 0 004 4h4M17 21l4-4m0 0l-4-4m4 4H9"/></svg>
+      <span class="nav-label-text">Payroll</span>
+    </div>
     <div class="nav-item" id="nav-query" onclick="navigate('query',this)" style="position:relative">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
       <span class="nav-label-text">Query</span>
@@ -622,6 +626,68 @@
       Requests are approved by an admin or HOD from <strong>Approvals → Leave Requests</strong>. Tasks stay on their original due date.
     </div>
     <div id="leavesContent"></div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       PAYROLL (Admin only)
+  ══════════════════════════════════════ -->
+  <div id="page-payroll" class="page">
+    <!-- Policy settings -->
+    <div style="background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:700;color:var(--foreground);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px">⚙️ Leave &amp; Payroll Policy</div>
+      <div style="display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--muted-foreground);margin-bottom:4px;text-transform:uppercase">Per-day rate basis</div>
+          <select id="pyBasis" style="padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;background:var(--card);color:var(--foreground)">
+            <option value="fixed30">Monthly Salary ÷ 30 (fixed)</option>
+            <option value="calendar">Monthly Salary ÷ calendar days in month</option>
+            <option value="working">Monthly Salary ÷ actual working days (Sunday/week-off excluded)</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--muted-foreground);margin-bottom:4px;text-transform:uppercase">Paid leave / month</div>
+          <input type="number" id="pyPaidLeave" min="0" step="0.5" style="width:100px;padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none"/>
+        </div>
+        <button class="btn btn-primary" onclick="savePayrollSettings()">Save Policy</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted-foreground);margin-top:10px">
+        Formula: <strong>Absent days</strong> = Total days − Days present. Approved leaves (from Leave Tracker, this month) cover absences up to the paid-leave quota above — everything beyond that is unpaid (LOP) and deducted at the per-day rate.
+      </div>
+    </div>
+
+    <!-- Bulk data uploads -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div style="background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px">
+        <div style="font-size:12px;font-weight:700;color:var(--foreground);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px">💰 Set Salaries (CSV)</div>
+        <div class="file-row">
+          <input type="file" id="pySalaryFile" accept=".csv" style="font-size:12px;flex:1"/>
+          <button class="btn btn-green btn-sm" id="pySalaryUploadBtn" onclick="uploadSalaryCSV()">⬆ Upload</button>
+          <button class="btn btn-outline btn-sm" onclick="downloadSalarySample()">⬇ Sample</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted-foreground);margin-top:6px">Format: <strong>email, salary</strong> (name column also accepted instead of email). Re-uploading updates the salary.</div>
+      </div>
+      <div style="background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px">
+        <div style="font-size:12px;font-weight:700;color:var(--foreground);margin-bottom:10px;text-transform:uppercase;letter-spacing:.4px">🗓️ Upload Attendance (CSV)</div>
+        <div class="file-row">
+          <input type="file" id="pyAttFile" accept=".csv" style="font-size:12px;flex:1"/>
+          <button class="btn btn-green btn-sm" id="pyAttUploadBtn" onclick="uploadAttendanceCSV()">⬆ Upload</button>
+          <button class="btn btn-outline btn-sm" onclick="downloadAttendanceSample()">⬇ Sample</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted-foreground);margin-top:6px">Format: <strong>email, days_present</strong> (name column also accepted). Uploaded for the month selected below — re-uploading for the same month replaces it.</div>
+      </div>
+    </div>
+
+    <!-- Generate -->
+    <div class="page-header">
+      <div style="display:flex;align-items:center;gap:12px">
+        <input type="month" id="pyMonth" style="padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;color:var(--foreground);background:var(--card)"/>
+        <button class="btn btn-primary" onclick="generatePayroll()">Generate</button>
+      </div>
+      <button class="btn btn-outline" id="pyExportBtn" onclick="exportPayrollCSV()" style="display:none">⬇ Export CSV</button>
+    </div>
+    <div id="payrollResults">
+      <div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Select a month and click <strong>Generate</strong></div>
+    </div>
   </div>
 
   <!-- ══════════════════════════════════════

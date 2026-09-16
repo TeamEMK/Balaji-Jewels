@@ -278,6 +278,7 @@ async function init() {
       document.getElementById('nav-users').style.display = 'flex';
       document.getElementById('nav-mis').style.display = 'flex';
       document.getElementById('nav-fms').style.display = 'flex';
+      document.getElementById('nav-payroll').style.display = 'flex';
       document.getElementById('bulkDeleteBtn').style.display = 'inline-flex';
       document.getElementById('bulkEditBtn').style.display = 'inline-flex';
       document.getElementById('misCombinedBtn').style.display = 'inline-flex';
@@ -421,7 +422,7 @@ function setMinDates() {
 // ══════════════════════════════════════════════════════
 // NAVIGATION
 // ══════════════════════════════════════════════════════
-const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',query:'Query',users:'Users',profile:'Profile',mis:'MIS Report',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client'};
+const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',query:'Query',users:'Users',profile:'Profile',mis:'MIS Report',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client'};
 
 // Sidebar par cursor jaate hi (jab wo expand hone lagta hai) koi bhi khula dropdown
 // band kar do — warna native select popup sidebar ke upar overlap dikhta hai.
@@ -505,6 +506,7 @@ function navigate(page, el) {
   if (page==='fms-tasks') loadFMSTasks();
   if (page==='mis') initMISDeptFilter();
   if (page==='leaves') loadLeaves();
+  if (page==='payroll') initPayrollPage();
   if (page==='query') loadQueries();
   if (page==='records') loadRecords();
   // navigate() core app ka hissa hai, yaani client ki copy me bhi jaata hai —
@@ -670,6 +672,184 @@ async function loadLeaveBadge() {
   if (pending > 0) { badge.textContent = pending; badge.style.display = 'flex'; }
   else badge.style.display = 'none';
   setApprovalTabCount('apprCountLeave', pending);
+}
+
+// ══════════════════════════════════════════════════════
+// PAYROLL — attendance CSV + Leave Tracker (approved leaves) milke har
+// employee ka payable amount calculate karte hain. Admin-only. Formula/
+// column details backend/routes/payroll.js me.
+// ══════════════════════════════════════════════════════
+let _payrollLastData = null; // export CSV ke liye yaad rakhte hain
+
+async function initPayrollPage() {
+  // Default month = current month
+  const el = document.getElementById('pyMonth');
+  if (el && !el.value) el.value = new Date().toISOString().slice(0, 7);
+  const s = await api('/api/payroll/settings');
+  if (!s.error) {
+    document.getElementById('pyBasis').value = s.perDayBasis || 'fixed30';
+    document.getElementById('pyPaidLeave').value = s.paidLeavePerMonth ?? 1;
+  }
+}
+
+async function savePayrollSettings() {
+  const perDayBasis = document.getElementById('pyBasis').value;
+  const paidLeavePerMonth = document.getElementById('pyPaidLeave').value;
+  const r = await api('/api/payroll/settings', 'PUT', { perDayBasis, paidLeavePerMonth });
+  if (r.error) { showToast(r.error, 'error'); return; }
+  showToast('Policy saved!');
+}
+
+function downloadSalarySample() {
+  const csv = `email,salary\npriyanka@test.com,25000\npooja@test.com,22000`;
+  downloadFile(csv, 'salary_sample.csv');
+}
+
+async function uploadSalaryCSV() {
+  const file = document.getElementById('pySalaryFile').files[0];
+  if (!file) { showToast('Please select a CSV file', 'error'); return; }
+  const btn = document.getElementById('pySalaryUploadBtn');
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = '⏳ Uploading…';
+  try {
+    const text = await file.text();
+    const dataRows = parseCSVRows(text);
+    const headerCells = dataRows[0].map(h => (h || '').trim().toLowerCase().replace(/\s+/g, '_'));
+    const iEmail = headerCells.indexOf('email');
+    const iName = headerCells.indexOf('name');
+    const iSalary = headerCells.findIndex(h => h === 'salary' || h === 'monthly_salary');
+    if (iSalary === -1 || (iEmail === -1 && iName === -1)) {
+      showToast('Invalid CSV header. Required: email (or name), salary', 'error'); return;
+    }
+    const rows = dataRows.slice(1).filter(r => r.some(f => (f || '').trim())).map(r => ({
+      email: iEmail !== -1 ? (r[iEmail] || '').trim() : '',
+      name: iName !== -1 ? (r[iName] || '').trim() : '',
+      salary: (r[iSalary] || '').trim(),
+    }));
+    if (!rows.length) { showToast('CSV is empty', 'error'); return; }
+    const r = await api('/api/payroll/salary/bulk', 'POST', { rows });
+    if (r.error) { showToast(r.error, 'error'); return; }
+    showToast(`✅ ${r.updated} salaries updated!${r.skipped.length ? ` (${r.skipped.length} skipped)` : ''}`);
+    if (r.skipped.length) console.warn('Salary upload skipped:', r.skipped);
+    document.getElementById('pySalaryFile').value = '';
+  } finally {
+    btn.disabled = false; btn.textContent = '⬆ Upload';
+  }
+}
+
+function downloadAttendanceSample() {
+  const csv = `email,days_present\npriyanka@test.com,26\npooja@test.com,24.5`;
+  downloadFile(csv, 'attendance_sample.csv');
+}
+
+async function uploadAttendanceCSV() {
+  const month = document.getElementById('pyMonth').value;
+  if (!month) { showToast('Pehle month select karo (upar Generate ke paas)', 'error'); return; }
+  const file = document.getElementById('pyAttFile').files[0];
+  if (!file) { showToast('Please select a CSV file', 'error'); return; }
+  const btn = document.getElementById('pyAttUploadBtn');
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = '⏳ Uploading…';
+  try {
+    const text = await file.text();
+    const dataRows = parseCSVRows(text);
+    const headerCells = dataRows[0].map(h => (h || '').trim().toLowerCase().replace(/\s+/g, '_'));
+    const iEmail = headerCells.indexOf('email');
+    const iName = headerCells.indexOf('name');
+    const iDays = headerCells.findIndex(h => h === 'days_present' || h === 'present' || h === 'days');
+    if (iDays === -1 || (iEmail === -1 && iName === -1)) {
+      showToast('Invalid CSV header. Required: email (or name), days_present', 'error'); return;
+    }
+    const rows = dataRows.slice(1).filter(r => r.some(f => (f || '').trim())).map(r => ({
+      email: iEmail !== -1 ? (r[iEmail] || '').trim() : '',
+      name: iName !== -1 ? (r[iName] || '').trim() : '',
+      daysPresent: (r[iDays] || '').trim(),
+    }));
+    if (!rows.length) { showToast('CSV is empty', 'error'); return; }
+    const r = await api('/api/payroll/attendance', 'POST', { month, rows });
+    if (r.error) { showToast(r.error, 'error'); return; }
+    showToast(`✅ ${r.updated} attendance records saved for ${month}!${r.skipped.length ? ` (${r.skipped.length} skipped)` : ''}`);
+    if (r.skipped.length) console.warn('Attendance upload skipped:', r.skipped);
+    document.getElementById('pyAttFile').value = '';
+    generatePayroll(); // turant refresh, taaki naya attendance dikhe
+  } finally {
+    btn.disabled = false; btn.textContent = '⬆ Upload';
+  }
+}
+
+async function generatePayroll() {
+  const month = document.getElementById('pyMonth').value;
+  const box = document.getElementById('payrollResults');
+  if (!month) { showToast('Month select karo', 'error'); return; }
+  box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Loading…</div>`;
+  document.getElementById('pyExportBtn').style.display = 'none';
+  const data = await api(`/api/payroll?month=${month}`);
+  if (data.error) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${data.error}</div>`; return; }
+  _payrollLastData = data;
+  renderPayrollTable(data);
+  document.getElementById('pyExportBtn').style.display = data.rows.length ? '' : 'none';
+}
+
+function renderPayrollTable(data) {
+  const box = document.getElementById('payrollResults');
+  if (!data.rows.length) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">No employees found</div>`; return; }
+  const money = v => v == null ? '—' : `₹${Number(v).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+  const num = v => v == null ? '—' : v;
+  let totalPayable = 0, missingSalary = 0, missingAttendance = 0;
+  const rowsHtml = data.rows.map(r => {
+    if (r.monthlySalary == null) missingSalary++;
+    if (!r.hasAttendance) missingAttendance++;
+    if (r.netPayable != null) totalPayable += r.netPayable;
+    const warn = (r.monthlySalary == null || !r.hasAttendance)
+      ? `<div style="font-size:10px;color:var(--warning);margin-top:2px">${r.monthlySalary==null?'⚠ No salary set':''}${r.monthlySalary==null && !r.hasAttendance?' · ':''}${!r.hasAttendance?'⚠ No attendance uploaded':''}</div>` : '';
+    return `<tr>
+      <td style="font-weight:600">${escapeHtml(r.name)}${warn}<div style="font-size:11px;color:var(--muted-foreground)">${escapeHtml(r.department||'—')}</div></td>
+      <td>${money(r.monthlySalary)}</td>
+      <td style="text-align:center">${num(r.totalDays)}</td>
+      <td style="text-align:center">${num(r.daysPresent)}</td>
+      <td style="text-align:center;color:var(--success)">${num(r.paidLeaveDays)}</td>
+      <td style="text-align:center;color:var(--destructive)">${num(r.unpaidDays)}</td>
+      <td style="text-align:center">${money(r.perDayRate)}</td>
+      <td style="text-align:center;color:var(--destructive)">${money(r.deduction)}</td>
+      <td style="text-align:right;font-weight:700">${money(r.netPayable)}</td>
+    </tr>`;
+  }).join('');
+  const warnBanner = (missingSalary || missingAttendance)
+    ? `<div style="background:color-mix(in srgb,var(--warning) 10%,transparent);border:1px solid color-mix(in srgb,var(--warning) 25%,transparent);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:var(--warning)">
+        ${missingSalary ? `⚠ ${missingSalary} employee(s) have no salary set — ` : ''}${missingAttendance ? `⚠ ${missingAttendance} employee(s) have no attendance uploaded for this month` : ''}
+      </div>` : '';
+  box.innerHTML = `
+    ${warnBanner}
+    <div style="background:var(--card);border-radius:12px;border:1px solid var(--border);overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:var(--muted);text-align:left">
+          <th style="padding:10px 12px">Employee</th>
+          <th style="padding:10px 12px">Monthly Salary</th>
+          <th style="padding:10px 12px;text-align:center">Total Days</th>
+          <th style="padding:10px 12px;text-align:center">Present</th>
+          <th style="padding:10px 12px;text-align:center">Paid Leave</th>
+          <th style="padding:10px 12px;text-align:center">Unpaid (LOP)</th>
+          <th style="padding:10px 12px;text-align:center">Per-day Rate</th>
+          <th style="padding:10px 12px;text-align:center">Deduction</th>
+          <th style="padding:10px 12px;text-align:right">Net Payable</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+        <tfoot><tr style="background:var(--muted);font-weight:700">
+          <td colspan="8" style="padding:10px 12px;text-align:right">Total Payable</td>
+          <td style="padding:10px 12px;text-align:right">${money(totalPayable)}</td>
+        </tr></tfoot>
+      </table>
+    </div>`;
+}
+
+function exportPayrollCSV() {
+  if (!_payrollLastData) return;
+  const lines = ['Employee,Department,Monthly Salary,Total Days,Days Present,Paid Leave,Unpaid (LOP),Per-day Rate,Deduction,Net Payable'];
+  _payrollLastData.rows.forEach(r => {
+    lines.push([r.name, r.department||'', r.monthlySalary??'', r.totalDays, r.daysPresent??'', r.paidLeaveDays, r.unpaidDays??'', r.perDayRate??'', r.deduction??'', r.netPayable??'']
+      .map(v => `"${String(v).replace(/"/g,'""')}"`).join(','));
+  });
+  downloadFile(lines.join('\n'), `payroll_${_payrollLastData.month}.csv`);
 }
 
 // ══════════════════════════════════════════════════════

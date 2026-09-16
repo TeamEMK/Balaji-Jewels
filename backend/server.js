@@ -1477,6 +1477,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
 // Express me registration ka kram na badle.
 require('./routes/dashboard')(app, ROUTE_CTX);
 require('./routes/catalog')(app, ROUTE_CTX);
+require('./routes/payroll')(app, ROUTE_CTX);
 
 // ══════════════════════════════════════════════════════
 // TASKS

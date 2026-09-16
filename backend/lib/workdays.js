@@ -48,4 +48,22 @@ function nextWorkingDay(fromISO, weekOff, extraOff, leaveDates) {
   return null;
 }
 
-module.exports = { parseWeekOff, parseExtraOff, isExtraOff, toISO, nextWorkingDay };
+// Kisi mahine me is user ke liye kitne "working days" hain — Sunday, week_off
+// aur extra_off (jaise mahine ka 2nd/4th Saturday) sab chhod kar. Payroll ke
+// per-day rate ka "working days" basis isi se nikalta hai.
+function workingDaysInMonth(year, month, weekOffStr, extraOffJson) {
+  const weekOff = parseWeekOff(weekOffStr);
+  const extraOff = parseExtraOff(extraOffJson);
+  const daysInMonth = new Date(year, month, 0).getDate(); // month 1-indexed yahan
+  let count = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(year, month - 1, d);
+    if (date.getDay() === 0) continue;
+    if (weekOff.includes(date.getDay())) continue;
+    if (isExtraOff(date, extraOff)) continue;
+    count++;
+  }
+  return count;
+}
+
+module.exports = { parseWeekOff, parseExtraOff, isExtraOff, toISO, nextWorkingDay, workingDaysInMonth };
