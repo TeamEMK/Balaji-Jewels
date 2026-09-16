@@ -2383,11 +2383,128 @@ async function transferToday(userId) {
 }
 
 // ══════════════════════════════════════════════════════
+// VOICE DICTATION — browser ka built-in Speech Recognition (free, no API key).
+// Sirf Chrome/Edge (Webkit) me kaam karta hai — Safari/Firefox me button hi
+// nahi dikhta (feature-detect). Text field me seedha bol ke bhar sakte ho;
+// yahan se aane wala text normal typed text jaisa hi hai — Assign dabate hi
+// wahi existing /api/tasks (type=delegation) flow se save hota hai, isliye
+// delegation_tasks aur MIS/scoring me automatically aa jaata hai, kuch alag
+// se wire nahi karna pada.
+// ══════════════════════════════════════════════════════
+let _voiceRecognition = null;
+let _voiceActiveField = null;
+let _voiceStopRequested = false;
+let _voiceLang = (() => { try { return localStorage.getItem('tm_voiceLang') || 'en-IN'; } catch(e) { return 'en-IN'; } })();
+
+function _voiceSupported() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+
+// Modal khulte waqt bulao — sirf tabhi mic button dikhao jab browser support kare.
+function initVoiceButton(wrapId) {
+  const wrap = document.getElementById(wrapId);
+  if (wrap) wrap.style.display = _voiceSupported() ? 'flex' : 'none';
+  const label = document.getElementById('dDescLangLabel');
+  if (label) label.textContent = _voiceLang === 'hi-IN' ? 'HI' : 'EN';
+}
+
+function toggleVoiceLang() {
+  _voiceLang = _voiceLang === 'hi-IN' ? 'en-IN' : 'hi-IN';
+  try { localStorage.setItem('tm_voiceLang', _voiceLang); } catch(e) {}
+  const label = document.getElementById('dDescLangLabel');
+  if (label) label.textContent = _voiceLang === 'hi-IN' ? 'HI' : 'EN';
+  // Recording chal rahi ho to naye language ke saath restart karo
+  if (_voiceRecognition && _voiceActiveField) {
+    const field = _voiceActiveField, btn = document.getElementById('dDescMicBtn');
+    _voiceStopRequested = true; _voiceRecognition.stop();
+    setTimeout(() => toggleVoiceDictation(field, btn), 250);
+  }
+}
+
+// Modal band/save hote waqt bulao — mic khula na reh jaye.
+function _voiceStopIfActive() {
+  if (_voiceRecognition) { _voiceStopRequested = true; _voiceRecognition.stop(); }
+}
+
+function toggleVoiceDictation(fieldId, btnEl) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) { showToast('Is browser me voice typing support nahi hai — Chrome ya Edge try karo', 'error'); return; }
+
+  // Isi field pe pehle se chal raha hai — Stop (toggle off)
+  if (_voiceRecognition && _voiceActiveField === fieldId) {
+    _voiceStopRequested = true;
+    _voiceRecognition.stop();
+    return;
+  }
+  // Kisi aur field pe chal raha tha to pehle use band karo
+  if (_voiceRecognition) { _voiceStopRequested = true; _voiceRecognition.stop(); }
+
+  const field = document.getElementById(fieldId);
+  if (!field) return;
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = _voiceLang;
+  recognition.continuous = true;
+  recognition.interimResults = true;
+
+  // Jo text pehle se tha usi ke aage bolna hai — interim result baar-baar poora
+  // replace hota hai, isliye "base" (pehle se tha) alag yaad rakhna padta hai.
+  const baseText = field.value ? field.value.replace(/\s+$/, '') + ' ' : '';
+  let finalText = '';
+
+  _voiceRecognition = recognition;
+  _voiceActiveField = fieldId;
+  _voiceStopRequested = false;
+  btnEl.textContent = '⏹ Stop';
+  btnEl.classList.add('voice-recording');
+
+  recognition.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const transcript = e.results[i][0].transcript;
+      if (e.results[i].isFinal) finalText += transcript + ' ';
+      else interim += transcript;
+    }
+    field.value = baseText + finalText + interim;
+  };
+  recognition.onerror = (e) => {
+    if (e.error === 'no-speech' || e.error === 'aborted') return; // chup rehna normal hai
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      showToast('Microphone access allow karo (browser permission)', 'error');
+    } else {
+      showToast('Voice typing me dikkat: ' + e.error, 'error');
+    }
+  };
+  recognition.onend = () => {
+    // 'continuous:true' ke bawajood browser kabhi-kabhi khud (silence ke baad)
+    // ruk jaata hai — jab tak user ne khud Stop na dabaya ho, phir se shuru kar do.
+    if (!_voiceStopRequested && _voiceActiveField === fieldId && _voiceRecognition === recognition) {
+      try { recognition.start(); return; } catch(e) { /* restart fail — neeche cleanup ho jayega */ }
+    }
+    if (_voiceActiveField === fieldId) {
+      btnEl.textContent = '🎤 Speak';
+      btnEl.classList.remove('voice-recording');
+    }
+    _voiceRecognition = null;
+    _voiceActiveField = null;
+  };
+
+  try {
+    recognition.start();
+  } catch(e) {
+    showToast('Voice typing start nahi ho payi', 'error');
+    btnEl.textContent = '🎤 Speak';
+    btnEl.classList.remove('voice-recording');
+    _voiceRecognition = null;
+    _voiceActiveField = null;
+  }
+}
+
+// ══════════════════════════════════════════════════════
 // DELEGATE MODAL
 // ══════════════════════════════════════════════════════
 async function openDelegate() {
   document.getElementById('delegateErr').style.display='none';
   document.getElementById('bulkFile').value=''; // purani selected file clear karo, warna dobara "Upload CSV" dabane par wahi purani file phir upload ho jaati hai
+  initVoiceButton('dDescVoiceWrap');
   document.getElementById('dDesc').value='';
   document.getElementById('dRemarks').value='';
   document.getElementById('dUrl').value='';
@@ -2412,6 +2529,7 @@ function onAwaitingDueDateChange() {
 }
 
 async function saveDelegate() {
+  _voiceStopIfActive(); // mic khula reh gaya ho to Assign dabate hi band kar do
   const err = document.getElementById('delegateErr');
   err.style.display='none';
   const doer = document.getElementById('dDoer').value;

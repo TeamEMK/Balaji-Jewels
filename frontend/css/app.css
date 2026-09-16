@@ -435,6 +435,10 @@ input[type=date],input[type=time],input[type=datetime-local]{color-scheme:inheri
 .role-badge.user{background:color-mix(in srgb,var(--success) 13%,transparent);color:var(--success);border-color:color-mix(in srgb,var(--success) 25%,transparent);}
 .role-badge.client{background:color-mix(in srgb,var(--warning) 13%,transparent);color:var(--warning);border-color:color-mix(in srgb,var(--warning) 25%,transparent);}
 
+/* Voice dictation — mic button pulses lal jab tak record chal raha ho */
+@keyframes voice-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--destructive) 45%,transparent);}50%{box-shadow:0 0 0 6px color-mix(in srgb,var(--destructive) 0%,transparent);}}
+.voice-recording{background:color-mix(in srgb,var(--destructive) 12%,transparent)!important;color:var(--destructive)!important;border-color:color-mix(in srgb,var(--destructive) 30%,transparent)!important;animation:voice-pulse 1.4s infinite;}
+
 .priority-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:99px;text-transform:uppercase;letter-spacing:.03em;border:1px solid transparent;}
 .priority-badge.low{background:color-mix(in srgb,var(--success) 13%,transparent);color:var(--success);border-color:color-mix(in srgb,var(--success) 25%,transparent);}
 .priority-badge.medium{background:color-mix(in srgb,var(--chart-1) 13%,transparent);color:var(--chart-1);border-color:color-mix(in srgb,var(--chart-1) 25%,transparent);}
