@@ -428,7 +428,7 @@ const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks',approvals:'Approv
 // Page ki poori HTML aur saare functions jaise the waise hi maujood hain,
 // isliye false karte hi feature apne purane data ke saath wapas aa jayega.
 const DISABLED_PAGES = {
-  'leaves':    true,  // Leave
+  'leaves':    false, // Leave
   'query':     true,  // Query
   // FMS ko Google service account chahiye (GOOGLE_CREDENTIALS_B64). Wo set na ho
   // to kuch tootta nahi — sheet wali API saaf error deti hai, list khaali aati
