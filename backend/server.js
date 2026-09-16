@@ -1530,7 +1530,7 @@ app.get('/api/tasks', requireAuth, async (req, res) => {
       where += ' AND t.due_date <= CURRENT_DATE';
     }
 
-    const [tasks] = await db.query(`SELECT t.id,'${type||'delegation'}' AS type,t.description,t.status,t.assigned_to,t.assigned_by,COALESCE(t.priority,'low') AS priority,${isDeleg?"COALESCE(t.approval,'no') AS approval,COALESCE(t.waiting_approval,0) AS waiting_approval,t.remarks,":"'no' AS approval,0 AS waiting_approval,t.remarks,"}t.doer_remark,TO_CHAR(t.due_date,'YYYY-MM-DD') AS due_date,TO_CHAR(t.created_at,'YYYY-MM-DD') AS assigned_on,TO_CHAR(t.completed_at,'YYYY-MM-DD HH12:MI AM') AS completed_at_ts,t.proof_image IS NOT NULL AS has_proof,t.proof_replaced,t.proof_video_id IS NOT NULL AS has_video,t.proof_video_replaced,u1.name AS "assignedToName",u2.name AS "assignedByName" FROM ${table} t JOIN users u1 ON t.assigned_to=u1.id JOIN users u2 ON t.assigned_by=u2.id ${where} ORDER BY t.due_date ASC`, params);
+    const [tasks] = await db.query(`SELECT t.id,'${type||'delegation'}' AS type,t.description,t.status,t.assigned_to,t.assigned_by,COALESCE(t.priority,'low') AS priority,${isDeleg?"COALESCE(t.approval,'no') AS approval,COALESCE(t.waiting_approval,0) AS waiting_approval,t.remarks,t.voice_note IS NOT NULL AS has_voice_note,":"'no' AS approval,0 AS waiting_approval,t.remarks,false AS has_voice_note,"}t.doer_remark,TO_CHAR(t.due_date,'YYYY-MM-DD') AS due_date,TO_CHAR(t.created_at,'YYYY-MM-DD') AS assigned_on,TO_CHAR(t.completed_at,'YYYY-MM-DD HH12:MI AM') AS completed_at_ts,t.proof_image IS NOT NULL AS has_proof,t.proof_replaced,t.proof_video_id IS NOT NULL AS has_video,t.proof_video_replaced,u1.name AS "assignedToName",u2.name AS "assignedByName" FROM ${table} t JOIN users u1 ON t.assigned_to=u1.id JOIN users u2 ON t.assigned_by=u2.id ${where} ORDER BY t.due_date ASC`, params);
 
     // mine=1 mode me hamesha flat tasks return karte hain (grouped nahi)
     if (isMine) {
@@ -1550,7 +1550,7 @@ app.get('/api/tasks', requireAuth, async (req, res) => {
 
 app.post('/api/tasks', requireAuth, async (req, res) => {
   try {
-    const { type, desc, assignedTo, approverEmail, date, priority, approval, remarks, url, awaitingDueDate } = req.body;
+    const { type, desc, assignedTo, approverEmail, date, priority, approval, remarks, url, awaitingDueDate, voiceNote, voiceNoteMime } = req.body;
     const isAdmin = req.session.role === 'admin';
     const isHod   = req.session.role === 'hod';
     const isUser  = req.session.role === 'user';
@@ -1567,8 +1567,8 @@ app.post('/api/tasks', requireAuth, async (req, res) => {
         if (aprRows.length) assignedBy = aprRows[0].id;
       }
       await db.query(
-        `INSERT INTO delegation_tasks (description,assigned_to,assigned_by,due_date,status,priority,approval,remarks,url,awaiting_due_date) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-        [desc, targetUser, assignedBy, skipDate ? null : date, 'pending', priority||'low', approval||'no', remarks||'', url||null, skipDate ? 1 : 0]
+        `INSERT INTO delegation_tasks (description,assigned_to,assigned_by,due_date,status,priority,approval,remarks,url,awaiting_due_date,voice_note,voice_note_mime) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [desc, targetUser, assignedBy, skipDate ? null : date, 'pending', priority||'low', approval||'no', remarks||'', url||null, skipDate ? 1 : 0, voiceNote||null, voiceNoteMime||null]
       );
       // 📧 Send delegation email (non-blocking — fire and forget)
       (async () => {
@@ -1662,6 +1662,23 @@ app.get('/api/tasks/:id/proof', requireAuth, async (req, res) => {
     if (!canSeeOthers && task.assigned_to !== req.session.userId) return res.status(403).json({ error: 'Not allowed' });
     if (!task.proof_image) return res.status(404).json({ error: 'No proof photo uploaded for this task' });
     res.json({ image: task.proof_image, replaced: task.proof_replaced });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
+});
+
+// ── Voice note — task delegate karte waqt agar mic se bola gaya tha, uski
+// asli recording. Sirf delegation_tasks me hai (checklist me nahi). Same
+// access rule jo proof photo/video me hai: apna kabhi bhi, doosron ka sirf
+// admin/HOD/PC.
+app.get('/api/tasks/:id/voice-note', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT assigned_to, voice_note, voice_note_mime FROM delegation_tasks WHERE id=?', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Task not found' });
+    const task = rows[0];
+    const role = req.session.role;
+    const canSeeOthers = role === 'admin' || role === 'hod' || role === 'pc';
+    if (!canSeeOthers && task.assigned_to !== req.session.userId) return res.status(403).json({ error: 'Not allowed' });
+    if (!task.voice_note) return res.status(404).json({ error: 'No voice note for this task' });
+    res.json({ audio: task.voice_note, mime: task.voice_note_mime || 'audio/webm' });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
 });
 

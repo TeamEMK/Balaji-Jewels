@@ -1595,9 +1595,32 @@ function dashProofBtns(t) {
     : `<button class="action-btn" style="background:var(--muted);color:var(--chart-1);padding:4px 7px;margin-right:3px" onclick="uploadProof(${t.id},'${t.type}',true)" title="Replace photo (allowed only once)">♻️</button>`;
   return view + replace;
 }
+// 🎤 Voice note — task delegate karte waqt mic se bola gaya tha to uski asli
+// recording (transcribed text ke saath-saath). Sirf delegation tasks me hoti
+// hai. Upload/replace nahi — delegator ne banayi thi, doer/admin sirf sunte hain.
+function voiceNoteBtn(t, type) {
+  if (type !== 'delegation' || !t.has_voice_note) return '';
+  const desc = (t.description||t.desc||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+  return `<button class="action-btn" style="background:color-mix(in srgb,var(--chart-5) 10%,transparent);color:var(--chart-5);padding:4px 7px;margin-right:3px" onclick="viewVoiceNote(${t.id},'${type}','${desc}')" title="Play voice note">🎤</button>`;
+}
+async function viewVoiceNote(taskId, type, taskDesc) {
+  document.getElementById('voiceNoteViewMeta').textContent = taskDesc || '';
+  const audio = document.getElementById('voiceNoteViewAudio');
+  const loading = document.getElementById('voiceNoteViewLoading');
+  audio.style.display = 'none'; audio.pause(); audio.removeAttribute('src');
+  loading.style.display = 'block'; loading.textContent = 'Loading…';
+  document.getElementById('voiceNoteViewModal').classList.add('open');
+
+  const r = await api(`/api/tasks/${taskId}/voice-note?type=${type}`);
+  if (r.error) { loading.textContent = r.error; return; }
+  audio.src = r.audio;
+  audio.style.display = 'block';
+  loading.style.display = 'none';
+}
+
 // Dashboard: photo buttons ke baad video buttons (dono slot alag hain)
 function dashProofAllBtns(t) {
-  return dashProofBtns(t) + proofVideoBtns(t, t.type, 'right', true);
+  return voiceNoteBtn(t, t.type) + dashProofBtns(t) + proofVideoBtns(t, t.type, 'right', true);
 }
 function dashDoneBtn(t) {
   // Proof photo abhi optional hai — Done bina photo ke bhi chalega
@@ -2079,7 +2102,7 @@ function renderTasksTable() {
   }
   // Photo buttons ke baad video buttons — dono slot alag hain
   function proofAllBtns(t) {
-    return proofBtns(t) + proofVideoBtns(t, tasksType, 'left', true);
+    return voiceNoteBtn(t, tasksType) + proofBtns(t) + proofVideoBtns(t, tasksType, 'left', true);
   }
   // Proof photo abhi optional hai — Done bina photo ke bhi chalega
   function doneBtn(t) {
@@ -2383,20 +2406,28 @@ async function transferToday(userId) {
 }
 
 // ══════════════════════════════════════════════════════
-// VOICE DICTATION — browser ka built-in Speech Recognition (free, no API key).
-// Sirf Chrome/Edge (Webkit) me kaam karta hai — Safari/Firefox me button hi
-// nahi dikhta (feature-detect). Text field me seedha bol ke bhar sakte ho;
-// yahan se aane wala text normal typed text jaisa hi hai — Assign dabate hi
-// wahi existing /api/tasks (type=delegation) flow se save hota hai, isliye
-// delegation_tasks aur MIS/scoring me automatically aa jaata hai, kuch alag
-// se wire nahi karna pada.
+// VOICE DICTATION + RECORDING — bolte hi text field bharta hai (browser ka
+// built-in Speech Recognition, free, no API key) AUR saath me asli awaaz bhi
+// record hoti hai (MediaRecorder), taaki baad me sunkar verify kiya ja sake
+// ki asal me kya bola gaya tha. Sirf Chrome/Edge me kaam karta hai — button
+// khud chhup jaata hai jahan support nahi (feature-detect).
+//
+// Text field me jo bhi aata hai wo normal typed text jaisa hi hai, aur audio
+// (base64) saveDelegate() ke through wahi existing /api/tasks (type=delegation)
+// call me jaata hai — isliye delegation_tasks aur MIS/scoring me automatically
+// aa jaata hai, kuch alag se wire nahi karna pada.
 // ══════════════════════════════════════════════════════
 let _voiceRecognition = null;
 let _voiceActiveField = null;
 let _voiceStopRequested = false;
 let _voiceLang = (() => { try { return localStorage.getItem('tm_voiceLang') || 'en-IN'; } catch(e) { return 'en-IN'; } })();
+let _voiceMediaStream = null;
+let _voiceMediaRecorder = null;
+let _voiceAudioChunks = [];
+let _voiceAudioResult = null; // { dataUrl, mime } — jab tak field save na ho
 
 function _voiceSupported() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+function _voiceRecordingSupported() { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder); }
 
 // Modal khulte waqt bulao — sirf tabhi mic button dikhao jab browser support kare.
 function initVoiceButton(wrapId) {
@@ -2404,6 +2435,7 @@ function initVoiceButton(wrapId) {
   if (wrap) wrap.style.display = _voiceSupported() ? 'flex' : 'none';
   const label = document.getElementById('dDescLangLabel');
   if (label) label.textContent = _voiceLang === 'hi-IN' ? 'HI' : 'EN';
+  removeVoiceRecording(); // purani modal session ki recording yahan na reh jaye
 }
 
 function toggleVoiceLang() {
@@ -2419,12 +2451,37 @@ function toggleVoiceLang() {
   }
 }
 
-// Modal band/save hote waqt bulao — mic khula na reh jaye.
-function _voiceStopIfActive() {
-  if (_voiceRecognition) { _voiceStopRequested = true; _voiceRecognition.stop(); }
+// MediaRecorder.stop() async hai — asli audio sirf uske 'onstop' me base64 ban
+// kar _voiceAudioResult me jaata hai. Isliye "band karo" ek Promise deta hai,
+// taaki saveDelegate() us Promise ka wait kar sake — warna Speak ke turant
+// baad Assign dabane par recording save hone se pehle hi request chali jaati.
+function _stopMediaRecorderAndWait() {
+  return new Promise((resolve) => {
+    if (!_voiceMediaRecorder || _voiceMediaRecorder.state === 'inactive') { resolve(); return; }
+    const recorder = _voiceMediaRecorder;
+    const prevOnStop = recorder.onstop;
+    recorder.onstop = (ev) => { try { if (prevOnStop) prevOnStop(ev); } finally { resolve(); } };
+    try { recorder.stop(); } catch(e) { resolve(); }
+  });
 }
 
-function toggleVoiceDictation(fieldId, btnEl) {
+// Modal band/save hote waqt bulao — mic khula na reh jaye. Promise deta hai
+// jise saveDelegate() await karta hai (audio processing poora hone tak).
+function _voiceStopIfActive() {
+  if (_voiceRecognition) { _voiceStopRequested = true; try { _voiceRecognition.stop(); } catch(e) {} }
+  return _stopMediaRecorderAndWait();
+}
+
+// Preview se recording hata do — dobara mic dabao to nayi recording bane.
+function removeVoiceRecording() {
+  _voiceAudioResult = null;
+  const wrap = document.getElementById('dDescVoicePreviewWrap');
+  const audio = document.getElementById('dDescVoicePreview');
+  if (wrap) wrap.style.display = 'none';
+  if (audio) { audio.pause(); audio.removeAttribute('src'); }
+}
+
+async function toggleVoiceDictation(fieldId, btnEl) {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) { showToast('Is browser me voice typing support nahi hai — Chrome ya Edge try karo', 'error'); return; }
 
@@ -2432,13 +2489,52 @@ function toggleVoiceDictation(fieldId, btnEl) {
   if (_voiceRecognition && _voiceActiveField === fieldId) {
     _voiceStopRequested = true;
     _voiceRecognition.stop();
+    _stopMediaRecorderAndWait();
     return;
   }
   // Kisi aur field pe chal raha tha to pehle use band karo
-  if (_voiceRecognition) { _voiceStopRequested = true; _voiceRecognition.stop(); }
+  if (_voiceRecognition) {
+    _voiceStopRequested = true;
+    _voiceRecognition.stop();
+    _stopMediaRecorderAndWait();
+  }
 
   const field = document.getElementById(fieldId);
   if (!field) return;
+
+  removeVoiceRecording(); // nayi recording shuru — purani preview hata do
+
+  // Audio record karna optional hai — permission na mile ya support na ho to
+  // bhi sirf typing (text) chalti rahe, poora feature block nahi hona chahiye.
+  if (_voiceRecordingSupported()) {
+    try {
+      _voiceMediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
+        .find(m => MediaRecorder.isTypeSupported(m)) || '';
+      _voiceMediaRecorder = mime ? new MediaRecorder(_voiceMediaStream, { mimeType: mime }) : new MediaRecorder(_voiceMediaStream);
+      _voiceAudioChunks = [];
+      _voiceMediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) _voiceAudioChunks.push(e.data); };
+      _voiceMediaRecorder.onstop = () => {
+        // Mic band karo (browser ka recording indicator hat jaaye)
+        if (_voiceMediaStream) { _voiceMediaStream.getTracks().forEach(t => t.stop()); _voiceMediaStream = null; }
+        if (!_voiceAudioChunks.length) return;
+        const blob = new Blob(_voiceAudioChunks, { type: _voiceMediaRecorder.mimeType || 'audio/webm' });
+        const reader = new FileReader();
+        reader.onload = () => {
+          _voiceAudioResult = { dataUrl: reader.result, mime: _voiceMediaRecorder.mimeType || 'audio/webm' };
+          const wrap = document.getElementById('dDescVoicePreviewWrap');
+          const audio = document.getElementById('dDescVoicePreview');
+          if (audio) audio.src = _voiceAudioResult.dataUrl;
+          if (wrap) wrap.style.display = 'flex';
+        };
+        reader.readAsDataURL(blob);
+      };
+      _voiceMediaRecorder.start();
+    } catch (e) {
+      // Sirf recording fail hui — dictation (text) phir bhi chalegi
+      _voiceMediaStream = null; _voiceMediaRecorder = null;
+    }
+  }
 
   const recognition = new SpeechRecognition();
   recognition.lang = _voiceLang;
@@ -2485,6 +2581,10 @@ function toggleVoiceDictation(fieldId, btnEl) {
     }
     _voiceRecognition = null;
     _voiceActiveField = null;
+    // Audio recording ko yahan chhedte nahi — use jisne bhi genuinely stop
+    // kiya (toggle-off / _voiceStopIfActive) wo apna _stopMediaRecorderAndWait()
+    // already chala chuka hoga. Yahan se dobara stop() call karna double-stop
+    // race deta (recorder tab tak 'inactive' na hua ho).
   };
 
   try {
@@ -2495,6 +2595,7 @@ function toggleVoiceDictation(fieldId, btnEl) {
     btnEl.classList.remove('voice-recording');
     _voiceRecognition = null;
     _voiceActiveField = null;
+    if (_voiceMediaRecorder && _voiceMediaRecorder.state !== 'inactive') _voiceMediaRecorder.stop();
   }
 }
 
@@ -2529,7 +2630,10 @@ function onAwaitingDueDateChange() {
 }
 
 async function saveDelegate() {
-  _voiceStopIfActive(); // mic khula reh gaya ho to Assign dabate hi band kar do
+  // Mic khula reh gaya ho to Assign dabate hi band karo — aur uska audio
+  // base64 banne ka wait karo, warna "Speak" ke turant baad Assign dabane par
+  // recording save hone se pehle hi request chali jaati (race condition).
+  await _voiceStopIfActive();
   const err = document.getElementById('delegateErr');
   err.style.display='none';
   const doer = document.getElementById('dDoer').value;
@@ -2543,8 +2647,11 @@ async function saveDelegate() {
   if (!doer) { err.textContent='Please select a doer'; err.style.display='block'; return; }
   if (!awaitingDueDate && !date) { err.textContent='Please select a date'; err.style.display='block'; return; }
   if (!desc) { err.textContent='Description is required'; err.style.display='block'; return; }
-  const r = await api('/api/tasks','POST',{type:'delegation',desc,assignedTo:doer,date,priority,approval,remarks,url,awaitingDueDate});
+  const body = {type:'delegation',desc,assignedTo:doer,date,priority,approval,remarks,url,awaitingDueDate};
+  if (_voiceAudioResult) { body.voiceNote = _voiceAudioResult.dataUrl; body.voiceNoteMime = _voiceAudioResult.mime; }
+  const r = await api('/api/tasks','POST',body);
   if (r && r.error) { err.textContent=r.error; err.style.display='block'; return; }
+  removeVoiceRecording();
   closeModal('delegateModal');
   showToast('Task delegated successfully!');
   loadDashboard();

@@ -95,8 +95,8 @@ module.exports = function registerDashboardRoutes(app, ctx) {
       // checklist table lakhon rows tak ja sakta hai. Upcoming tasks All Tasks
       // page ke Upcoming tab me milte hain, jo apna data alag se laata hai.
       const counts = t => `SELECT SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending,SUM(CASE WHEN status='revised' THEN 1 ELSE 0 END) AS revised,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed FROM ${t} t WHERE 1=1 ${userFilter} ${dateClause}`;
-      const listSql = (t, type, approval, waiting) =>
-        `SELECT t.id,'${type}' AS type,t.description,t.status,t.assigned_to,COALESCE(t.priority,'low') AS priority,${approval} AS approval,${waiting} AS waiting_approval,t.remarks,t.doer_remark,TO_CHAR(t.due_date,'YYYY-MM-DD') AS due_date,t.proof_image IS NOT NULL AS has_proof,t.proof_replaced,t.proof_video_id IS NOT NULL AS has_video,t.proof_video_replaced,u1.name AS "assignedToName",u2.name AS "assignedByName" FROM ${t} t JOIN users u1 ON t.assigned_to=u1.id JOIN users u2 ON t.assigned_by=u2.id WHERE ${listClause} ${userFilter} ORDER BY t.due_date ASC LIMIT 500`;
+      const listSql = (t, type, approval, waiting, hasVoiceNote) =>
+        `SELECT t.id,'${type}' AS type,t.description,t.status,t.assigned_to,COALESCE(t.priority,'low') AS priority,${approval} AS approval,${waiting} AS waiting_approval,t.remarks,t.doer_remark,TO_CHAR(t.due_date,'YYYY-MM-DD') AS due_date,t.proof_image IS NOT NULL AS has_proof,t.proof_replaced,t.proof_video_id IS NOT NULL AS has_video,t.proof_video_replaced,${hasVoiceNote} AS has_voice_note,u1.name AS "assignedToName",u2.name AS "assignedByName" FROM ${t} t JOIN users u1 ON t.assigned_to=u1.id JOIN users u2 ON t.assigned_by=u2.id WHERE ${listClause} ${userFilter} ORDER BY t.due_date ASC LIMIT 500`;
 
       // Chaaron queries saath me. Ye ek doosre par nirbhar nahi hain — userFilter
       // aur listClause upar hi tay ho chuke hain, aur koi kisi ka nateeja nahi
@@ -109,8 +109,8 @@ module.exports = function registerDashboardRoutes(app, ctx) {
       const [dCount, cCount, dRows, cRows] = await Promise.all([
         wantDeleg ? db.query(counts('delegation_tasks'), params) : null,
         wantChk   ? db.query(counts('checklist_tasks'),  params) : null,
-        wantDeleg ? db.query(listSql('delegation_tasks', 'delegation', "COALESCE(t.approval,'no')", 'COALESCE(t.waiting_approval,0)'), params) : null,
-        wantChk   ? db.query(listSql('checklist_tasks',  'checklist',  "'no'", '0'), params) : null,
+        wantDeleg ? db.query(listSql('delegation_tasks', 'delegation', "COALESCE(t.approval,'no')", 'COALESCE(t.waiting_approval,0)', 't.voice_note IS NOT NULL'), params) : null,
+        wantChk   ? db.query(listSql('checklist_tasks',  'checklist',  "'no'", '0', 'false'), params) : null,
       ]);
 
       let pending = 0, revised = 0, completed = 0;
