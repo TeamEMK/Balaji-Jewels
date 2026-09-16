@@ -4131,6 +4131,17 @@ app.use((err, req, res, next) => {
 // deta hai (api/index.js `app` ko wahan pass karta hai). listen() wahan
 // bekaar bhi hai aur cold start ko dheema bhi karta hai.
 if (!IS_SERVERLESS) {
+  // Auto-migrate: shared hosting (Hostinger jaise) par terminal/SSH nahi milta,
+  // isliye `npm run db:migrate` chalana bhoolna aasan hai — naya feature deploy
+  // ho jaata hai par uska table nahi banta, aur wo "Server error" deta reh jaata
+  // hai (jaisa Catalog ke saath hua tha). Ab boot hote hi khud pending
+  // migrations laga leta hai. Best-effort hai — fail ho to sirf log, boot nahi
+  // rukta (purani migrations already lagi to always safe/no-op hain).
+  const { runMigrations } = require('../data/scripts/migrate');
+  runMigrations({ throwOnFail: false })
+    .then(({ applied }) => { if (applied) console.log(`  🗄️  ${applied} naya migration laga`); })
+    .catch(e => console.error('  ⚠️  Auto-migrate check failed:', e.message));
+
   app.listen(PORT, () => {
     console.log(`\n  ✦ ${BRAND.short}: http://localhost:${PORT}\n`);
   });

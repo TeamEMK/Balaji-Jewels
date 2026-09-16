@@ -105,37 +105,54 @@ async function openMysql() {
   };
 }
 
-(async () => {
+// Asli kaam — CLI (`npm run db:migrate`) aur server boot (auto-migrate,
+// backend/server.js) dono isi ko bulaate hain. `throwOnFail` CLI ke liye true
+// (ek migration fail ho to turant ruk jao, DB half-migrated maloom pade), aur
+// server boot ke liye false (ek file fail ho to log karke agli try karo — poori
+// app is wajah se boot hone se nahi rukni chahiye).
+async function runMigrations({ throwOnFail = true, log = console.log } = {}) {
   const db = DIALECT === 'mysql' ? await openMysql() : await openPostgres();
-  console.log(`  ${db.label} — data/migrations/${DIALECT}/`);
+  log(`  ${db.label} — data/migrations/${DIALECT}/`);
+  try {
+    await db.ensureLog();
+    const done = new Set((await db.query('SELECT filename FROM schema_migrations')).map(r => r.filename));
+    const files = fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort();
 
-  await db.ensureLog();
-  const done = new Set((await db.query('SELECT filename FROM schema_migrations')).map(r => r.filename));
-  const files = fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort();
-
-  let applied = 0;
-  for (const f of files) {
-    if (done.has(f)) { console.log(`  ⏭️  ${f} (pehle se lagi hui)`); continue; }
-    const sql = fs.readFileSync(path.join(dir, f), 'utf8');
-    try {
-      await db.begin();
-      await db.query(sql);
-      await db.markDone(f);
-      await db.commit();
-      console.log(`  ✅ ${f}`);
-      applied++;
-    } catch (e) {
-      await db.rollback().catch(() => {});
-      console.error(`  ❌ ${f} — ${e.message}`);
-      if (DIALECT === 'mysql') {
-        console.error('     MySQL me DDL rollback nahi hota — aadhi tables ban chuki hongi.');
-        console.error('     Database drop karke khaali se dobara chalao.');
+    let applied = 0;
+    for (const f of files) {
+      if (done.has(f)) continue;
+      const sql = fs.readFileSync(path.join(dir, f), 'utf8');
+      try {
+        await db.begin();
+        await db.query(sql);
+        await db.markDone(f);
+        await db.commit();
+        log(`  ✅ migration: ${f}`);
+        applied++;
+      } catch (e) {
+        await db.rollback().catch(() => {});
+        const hint = DIALECT === 'mysql'
+          ? ' (MySQL me DDL rollback nahi hota — aadhi tables ban chuki hongi.)'
+          : '';
+        log(`  ❌ migration ${f} failed: ${e.message}${hint}`);
+        if (throwOnFail) throw e;
+        // Server-boot mode: is file ko chhod ke aage mat badho — baaki files
+        // isi par depend kar sakti hain, galat kram me lagana asli nuksaan hai.
+        break;
       }
-      await db.end();
-      process.exit(1);
     }
+    return { applied, total: await db.tableCount() };
+  } finally {
+    await db.end();
   }
+}
 
-  console.log(`\n  ${applied} migration lagi. Ab database me ${await db.tableCount()} tables hain.`);
-  await db.end();
-})().catch(e => { console.error('migrate failed:', e.message); process.exit(1); });
+if (require.main === module) {
+  runMigrations({ throwOnFail: true })
+    .then(({ applied, total }) => {
+      console.log(`\n  ${applied} migration lagi. Ab database me ${total} tables hain.`);
+    })
+    .catch(e => { console.error('migrate failed:', e.message); process.exit(1); });
+} else {
+  module.exports = { runMigrations };
+}
