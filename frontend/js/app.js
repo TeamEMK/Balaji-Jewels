@@ -243,7 +243,7 @@ async function init() {
     if (!ME || !ME.id) { window.location.replace('/'); return; }
     const initials = ME.name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
     document.getElementById('sidebarName').textContent = ME.name;
-    const roleLabel = ME.role==='admin' ? '👑 Admin' : ME.role==='hod' ? '🏢 HOD' : ME.role==='pc' ? '🖥️ PC' : '👤 Employee';
+    const roleLabel = ME.role==='admin' ? '👑 Admin' : ME.role==='hod' ? '🏢 HOD' : ME.role==='pc' ? '🖥️ PC' : ME.role==='client' ? '🛍 Client' : '👤 Employee';
     document.getElementById('sidebarRole').textContent = roleLabel;
     document.getElementById('pName').value = ME.name;
     document.getElementById('pEmail').value = ME.email;
@@ -257,6 +257,22 @@ async function init() {
     // View-only user: UI se badalne wale buttons hata do. Rok server par hai,
     // ye sirf isliye ki click karne par har baar error toast na mile.
     document.documentElement.classList.toggle('view-only', Number(ME.view_only) === 1);
+
+    // 'client' role — jewelry customers, sirf Catalog dekhne ke liye login karte
+    // hain. Baaki har nav item chhupa do aur seedha Catalog par le jao — backend
+    // bhi in APIs ko already block karta hai (requireAuth allowlist), isliye
+    // baaki init() (badges, FMS checks, disabled-pages loop) chalane ka koi
+    // matlab nahi, sab 403 hi denge.
+    if (ME.role === 'client') {
+      // Allowlist se hide karo (specific IDs yaad rakhne ke bajaye) — taaki aage
+      // koi naya nav item add ho to wo bhi by-default client se chhupa rahe,
+      // bhoolne se leak na ho. Sirf Catalog aur Profile dikhte hain.
+      document.querySelectorAll('.nav-item').forEach(n => { n.style.display = 'none'; });
+      document.getElementById('nav-catalog').style.display = 'flex';
+      document.querySelector('.nav-item[onclick*="profile"]').style.display = 'flex';
+      navigate('catalog', document.getElementById('nav-catalog'));
+      return;
+    }
 
     if (ME.role === 'admin') {
       document.getElementById('nav-users').style.display = 'flex';
@@ -405,7 +421,7 @@ function setMinDates() {
 // ══════════════════════════════════════════════════════
 // NAVIGATION
 // ══════════════════════════════════════════════════════
-const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks',approvals:'Approvals',leaves:'Leave',query:'Query',users:'Users',profile:'Profile',mis:'MIS Report',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client'};
+const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',query:'Query',users:'Users',profile:'Profile',mis:'MIS Report',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client'};
 
 // Sidebar par cursor jaate hi (jab wo expand hone lagta hai) koi bhi khula dropdown
 // band kar do — warna native select popup sidebar ke upar overlap dikhta hai.
@@ -456,6 +472,14 @@ const PAGE_NAV_ID = {
 };
 
 function navigate(page, el) {
+  // 'client' role (jewelry customers) sirf Catalog aur apna Profile dekh sakta
+  // hai — koi bhi raasta (deep-link/refresh-restore/stray call se bhi) Catalog
+  // par bhej do. Backend bhi yehi allowlist enforce karta hai (requireAuth),
+  // ye sirf UI ko bhi consistent rakhta hai.
+  if (ME && ME.role === 'client' && page !== 'catalog' && page !== 'profile') {
+    page = 'catalog';
+    el = document.getElementById('nav-catalog');
+  }
   // Band feature — koi bhi raasta (nav, deep-link, refresh-restore, ya koi
   // purana navigate() call jo code me kahin bacha ho) dashboard par bhej do.
   // Wahi baat un doers ke liye jo kisi FMS step ka hissa nahi hain: unke liye
@@ -472,6 +496,7 @@ function navigate(page, el) {
   document.getElementById('topbarTitle').textContent = pageTitles[page] || page;
   if (page==='dashboard') loadDashboard();
   if (page==='alltasks') loadAllTasks();
+  if (page==='catalog') loadCatalog();
   if (page==='users') loadUsers();
   // Page khulte hi teeno tabs ke counts refresh — yahi wo lamha hai jab user
   // dekhta hai ki request kis tab me padi hai.
@@ -645,6 +670,121 @@ async function loadLeaveBadge() {
   if (pending > 0) { badge.textContent = pending; badge.style.display = 'flex'; }
   else badge.style.display = 'none';
   setApprovalTabCount('apprCountLeave', pending);
+}
+
+// ══════════════════════════════════════════════════════
+// CATALOG — jewelry items (image + naam + description + price). 'client'
+// role (customers) sirf ye dekh sakte hain, admin/HOD/PC add/edit/delete
+// kar sakte hain.
+// ══════════════════════════════════════════════════════
+let _catalogItems = [];
+function _canManageCatalog() { return !!(ME && (ME.role === 'admin' || ME.role === 'hod' || ME.role === 'pc')); }
+
+async function loadCatalog() {
+  document.getElementById('catalogAddBtn').style.display = _canManageCatalog() ? '' : 'none';
+  const box = document.getElementById('catalogContent');
+  box.innerHTML = '<div style="grid-column:1/-1;padding:30px;text-align:center;color:var(--muted-foreground)">Loading…</div>';
+  const rows = await api('/api/catalog');
+  if (rows.error) {
+    box.innerHTML = `<div style="grid-column:1/-1;padding:30px;text-align:center;color:var(--destructive)">${escapeHtml(rows.error)}</div>`;
+    return;
+  }
+  _catalogItems = rows;
+  renderCatalogGrid();
+}
+
+function renderCatalogGrid() {
+  const box = document.getElementById('catalogContent');
+  if (!_catalogItems.length) {
+    box.innerHTML = '<div style="grid-column:1/-1;padding:30px;text-align:center;color:var(--muted-foreground)">No catalog items yet.</div>';
+    return;
+  }
+  const canManage = _canManageCatalog();
+  box.innerHTML = _catalogItems.map(it => `
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column">
+      <div style="width:100%;aspect-ratio:1/1;background:var(--muted) ${it.image ? `url('${it.image}') center/cover no-repeat` : ''};display:flex;align-items:center;justify-content:center;color:var(--muted-foreground);font-size:12px">
+        ${it.image ? '' : 'No photo'}
+      </div>
+      <div style="padding:12px;display:flex;flex-direction:column;gap:4px;flex:1">
+        <div style="font-weight:700;font-size:14px;color:var(--foreground)">${escapeHtml(it.name)}</div>
+        ${it.price != null ? `<div style="font-weight:600;color:var(--primary);font-size:13px">₹${Number(it.price).toLocaleString('en-IN')}</div>` : ''}
+        ${it.description ? `<div style="font-size:12px;color:var(--muted-foreground);line-height:1.4;flex:1">${escapeHtml(it.description)}</div>` : ''}
+        ${canManage ? `
+          <div style="display:flex;gap:6px;margin-top:8px">
+            <button class="btn btn-outline btn-sm" style="flex:1" onclick="openCatalogItem(${it.id})">Edit</button>
+            <button class="btn btn-outline btn-sm" style="color:var(--destructive);border-color:color-mix(in srgb,var(--destructive) 22%,transparent)" onclick="deleteCatalogItem(${it.id})">🗑</button>
+          </div>` : ''}
+      </div>
+    </div>`).join('');
+}
+
+let _catalogItemImageChanged = false;
+function openCatalogItem(id) {
+  document.getElementById('catalogItemErr').style.display = 'none';
+  document.getElementById('catalogItemId').value = id || '';
+  _catalogItemImageChanged = false;
+  const preview = document.getElementById('catalogItemPreview');
+  if (id) {
+    const it = _catalogItems.find(x => String(x.id) === String(id));
+    document.getElementById('catalogItemModalTitle').textContent = 'Edit Catalog Item';
+    document.getElementById('catalogItemName').value = it?.name || '';
+    document.getElementById('catalogItemDesc').value = it?.description || '';
+    document.getElementById('catalogItemPrice').value = it?.price ?? '';
+    preview.dataset.image = it?.image || '';
+    preview.style.backgroundImage = it?.image ? `url('${it.image}')` : '';
+    preview.textContent = it?.image ? '' : 'No photo';
+  } else {
+    document.getElementById('catalogItemModalTitle').textContent = '+ Add Catalog Item';
+    document.getElementById('catalogItemName').value = '';
+    document.getElementById('catalogItemDesc').value = '';
+    document.getElementById('catalogItemPrice').value = '';
+    preview.dataset.image = '';
+    preview.style.backgroundImage = '';
+    preview.textContent = 'No photo';
+  }
+  document.getElementById('catalogItemImgInput').value = '';
+  document.getElementById('catalogItemModal').classList.add('open');
+}
+
+async function handleCatalogItemImage(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    const dataUrl = await compressImage(file, 1000, 0.75);
+    const preview = document.getElementById('catalogItemPreview');
+    preview.dataset.image = dataUrl;
+    preview.style.backgroundImage = `url('${dataUrl}')`;
+    preview.textContent = '';
+    _catalogItemImageChanged = true;
+  } catch (e) { showToast(e.message || 'Could not read the photo', 'error'); }
+}
+
+async function saveCatalogItem() {
+  const err = document.getElementById('catalogItemErr'); err.style.display = 'none';
+  const id = document.getElementById('catalogItemId').value;
+  const name = document.getElementById('catalogItemName').value.trim();
+  const description = document.getElementById('catalogItemDesc').value.trim();
+  const price = document.getElementById('catalogItemPrice').value.trim();
+  if (!name) { err.textContent = 'Name required'; err.style.display = 'block'; return; }
+  const body = { name, description, price };
+  // Naya item: photo na choose ki ho to bhi khaali bhej do. Edit: photo badli
+  // hi nahi to field hi mat bhejo — server purani wahi rehne dega.
+  if (!id || _catalogItemImageChanged) {
+    body.image = document.getElementById('catalogItemPreview').dataset.image || '';
+  }
+  const r = id ? await api(`/api/catalog/${id}`, 'PUT', body) : await api('/api/catalog', 'POST', body);
+  if (r.error) { err.textContent = r.error; err.style.display = 'block'; return; }
+  closeModal('catalogItemModal');
+  showToast(id ? 'Item updated!' : 'Item added!');
+  loadCatalog();
+}
+
+async function deleteCatalogItem(id) {
+  if (!await confirmDialog('Delete this catalog item?', {title:'Delete Item', okText:'Delete', danger:true})) return;
+  const r = await api(`/api/catalog/${id}`, 'DELETE');
+  if (r.error) { showToast(r.error, 'error'); return; }
+  showToast('Item deleted');
+  loadCatalog();
 }
 
 // ══════════════════════════════════════════════════════
@@ -2760,7 +2900,7 @@ function renderUsersTable(users) {
   }
   // Store all users in map so openEditUser(id) can safely retrieve data
   users.forEach(u => { _usersMap[u.id] = u; });
-  const roleLabel = r => r==='admin'?'👑 Admin':r==='hod'?'🏢 HOD':r==='pc'?'🖥️ PC':'👤 User';
+  const roleLabel = r => r==='admin'?'👑 Admin':r==='hod'?'🏢 HOD':r==='pc'?'🖥️ PC':r==='client'?'🛍 Client':'👤 User';
   tbody.innerHTML = users.map(u=>`
     <tr>
       <td>${String(u.id) === String(ME.id)

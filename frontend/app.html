@@ -45,13 +45,17 @@
     </button>
   </div>
   <nav class="nav">
-    <div class="nav-item active" onclick="navigate('dashboard',this)">
+    <div class="nav-item active" id="nav-dashboard" onclick="navigate('dashboard',this)">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
       <span class="nav-label-text">Dashboard</span>
     </div>
-    <div class="nav-item" onclick="navigate('alltasks',this)">
+    <div class="nav-item" id="nav-alltasks" onclick="navigate('alltasks',this)">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
       <span class="nav-label-text">All Tasks</span>
+    </div>
+    <div class="nav-item" id="nav-catalog" onclick="navigate('catalog',this)">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375C2.754 3.75 2.25 4.254 2.25 4.875v1.5c0 .621.504 1.125 1.125 1.125z"/></svg>
+      <span class="nav-label-text">Catalog</span>
     </div>
     <div class="nav-item" id="nav-approvals" onclick="navigate('approvals',this)" style="position:relative;display:none">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -618,6 +622,18 @@
       Requests are approved by an admin or HOD from <strong>Approvals → Leave Requests</strong>. Tasks stay on their original due date.
     </div>
     <div id="leavesContent"></div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       CATALOG — jewelry items, image + naam + description + price.
+       'client' role (customers) sirf ye page dekh sakte hain.
+  ══════════════════════════════════════ -->
+  <div id="page-catalog" class="page">
+    <div class="page-header">
+      <div></div>
+      <button class="btn btn-primary" id="catalogAddBtn" onclick="openCatalogItem()" style="display:none">+ Add Item</button>
+    </div>
+    <div id="catalogContent" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px"></div>
   </div>
 
   <!-- ══════════════════════════════════════
@@ -1279,6 +1295,7 @@
           <option value="hod">HOD</option>
           <option value="pc">PC (View + Approve)</option>
           <option value="admin">Admin</option>
+          <option value="client">Client (Catalog only)</option>
         </select>
       </div>
       <div class="form-group"><label>Access</label>
@@ -1434,6 +1451,41 @@
     <div class="modal-footer" style="justify-content:space-between">
       <button class="btn btn-outline" onclick="closeModal('applyLeaveModal')">Cancel</button>
       <button class="btn btn-primary" id="lvSubmitBtn" onclick="submitLeave()">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     CATALOG ITEM MODAL (Admin / HOD / PC)
+══════════════════════════════════════ -->
+<div class="modal-overlay" id="catalogItemModal">
+  <div class="modal" style="max-width:460px">
+    <h3 id="catalogItemModalTitle">+ Add Catalog Item</h3>
+    <div class="alert error" id="catalogItemErr"></div>
+    <input type="hidden" id="catalogItemId"/>
+    <div class="form-group">
+      <label>Photo</label>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div id="catalogItemPreview" style="width:80px;height:80px;border-radius:10px;background:var(--muted);background-size:cover;background-position:center;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--muted-foreground);font-size:11px;border:1.5px dashed var(--border)">No photo</div>
+        <input type="file" id="catalogItemImgInput" accept="image/*" style="display:none" onchange="handleCatalogItemImage(event)"/>
+        <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('catalogItemImgInput').click()">📷 Choose Photo</button>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Name</label>
+      <input type="text" id="catalogItemName" placeholder="e.g. Diamond Solitaire Ring"/>
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <textarea id="catalogItemDesc" placeholder="Design, weight, purity, quality etc…" style="min-height:70px"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Price <span style="color:var(--muted-foreground);font-weight:400">(optional)</span></label>
+      <input type="number" id="catalogItemPrice" placeholder="e.g. 45000" min="0" step="0.01"/>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn btn-outline" onclick="closeModal('catalogItemModal')">Cancel</button>
+      <button class="btn btn-primary" id="catalogItemSaveBtn" onclick="saveCatalogItem()">Save</button>
     </div>
   </div>
 </div>

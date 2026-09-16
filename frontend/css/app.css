@@ -433,6 +433,7 @@ input[type=date],input[type=time],input[type=datetime-local]{color-scheme:inheri
 .role-badge.pc{background:color-mix(in srgb,var(--chart-5) 14%,transparent);color:var(--chart-5);border-color:color-mix(in srgb,var(--chart-5) 26%,transparent);}
 .role-badge.hod{background:color-mix(in srgb,var(--chart-1) 14%,transparent);color:var(--chart-1);border-color:color-mix(in srgb,var(--chart-1) 26%,transparent);}
 .role-badge.user{background:color-mix(in srgb,var(--success) 13%,transparent);color:var(--success);border-color:color-mix(in srgb,var(--success) 25%,transparent);}
+.role-badge.client{background:color-mix(in srgb,var(--warning) 13%,transparent);color:var(--warning);border-color:color-mix(in srgb,var(--warning) 25%,transparent);}
 
 .priority-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:99px;text-transform:uppercase;letter-spacing:.03em;border:1px solid transparent;}
 .priority-badge.low{background:color-mix(in srgb,var(--success) 13%,transparent);color:var(--success);border-color:color-mix(in srgb,var(--success) 25%,transparent);}

@@ -890,6 +890,17 @@ async function requireAuth(req, res, next) {
     if (viewOnly && req.method !== 'GET' && !VIEW_ONLY_ALLOWED_POSTS.has(req.path)) {
       return res.status(403).json({ error: 'You have view-only access — changes are not allowed.' });
     }
+
+    // 'client' role — jewelry customers, catalog dekhne ke liye login karte hain.
+    // ("New Client Copy" wale white-label reseller 'client' concept se bilkul
+    // alag hai — naam ka takraav hai, matlab ka nahi.) Har naye route ke liye
+    // alag se check likhna bharosemand nahi (koi ek chhoot jaaye to leak) —
+    // isliye ek hi jagah allowlist: sirf ye prefixes, baaki sab 403.
+    if (req.session.role === 'client') {
+      const CLIENT_ALLOWED_PREFIXES = ['/api/me', '/api/catalog', '/api/profile'];
+      const allowed = CLIENT_ALLOWED_PREFIXES.some(p => req.path === p || req.path.startsWith(p + '/'));
+      if (!allowed) return res.status(403).json({ error: 'Not allowed for this account' });
+    }
     next();
   } catch(e) { res.status(401).json({ error: 'Invalid token' }); }
 }
@@ -1453,6 +1464,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
 // Routes yahin register hote hain — usi jagah jahan pehle likhe the, taaki
 // Express me registration ka kram na badle.
 require('./routes/dashboard')(app, ROUTE_CTX);
+require('./routes/catalog')(app, ROUTE_CTX);
 
 // ══════════════════════════════════════════════════════
 // TASKS
