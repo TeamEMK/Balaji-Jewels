@@ -620,7 +620,10 @@
   <div id="page-leaves" class="page">
     <div class="page-header">
       <div></div>
-      <button class="btn btn-primary" onclick="openApplyLeave()">+ Apply Leave</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" onclick="openLeavePolicy()">📄 Leave Policy</button>
+        <button class="btn btn-primary" onclick="openApplyLeave()">+ Apply Leave</button>
+      </div>
     </div>
     <div style="background:var(--accent);border:1px solid var(--accent);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:var(--accent-foreground)">
       Requests are approved by an admin or HOD from <strong>Approvals → Leave Requests</strong>. Tasks stay on their original due date.
@@ -1544,6 +1547,62 @@
     <div class="modal-footer" style="justify-content:space-between">
       <button class="btn btn-outline" onclick="closeModal('applyLeaveModal')">Cancel</button>
       <button class="btn btn-primary" id="lvSubmitBtn" onclick="submitLeave()">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     REJECT LEAVE MODAL — reason + optional policy email + warning letter
+══════════════════════════════════════ -->
+<div class="modal-overlay" id="rejectLeaveModal">
+  <div class="modal" style="max-width:480px">
+    <h3>Reject Leave Request</h3>
+    <div class="alert error" id="rejectLeaveErr"></div>
+    <input type="hidden" id="rjLeaveId"/>
+    <div id="rjLeaveMeta" style="font-size:12px;color:var(--muted-foreground);margin-bottom:12px"></div>
+    <div class="form-group">
+      <label>Reason <span style="color:var(--muted-foreground);font-weight:400">(optional, shown to employee)</span></label>
+      <textarea id="rjReason" placeholder="Why is this leave being rejected?" style="min-height:60px"></textarea>
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;margin:0 0 10px;text-transform:none;font-weight:500;font-size:13px;color:var(--foreground);cursor:pointer">
+      <input type="checkbox" id="rjSendPolicy" style="accent-color:var(--primary)"/>
+      📄 Email the leave policy to this employee
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;margin:0 0 6px;text-transform:none;font-weight:500;font-size:13px;color:var(--foreground);cursor:pointer">
+      <input type="checkbox" id="rjSendWarning" onchange="toggleRejectWarningBox()" style="accent-color:var(--destructive)"/>
+      ⚠️ Send a warning letter (repeated/unapproved absence)
+    </label>
+    <div id="rjWarningBox" class="form-group" style="display:none;margin-top:8px">
+      <label>Warning Letter Text <span style="color:var(--muted-foreground);font-weight:400">(edit before sending)</span></label>
+      <textarea id="rjWarningText" style="min-height:120px"></textarea>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn btn-outline" onclick="closeModal('rejectLeaveModal')">Cancel</button>
+      <button class="btn btn-primary" style="background:var(--destructive)" onclick="submitRejectLeave()">Reject</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     LEAVE POLICY MODAL — sab dekh sakte hain, sirf Admin edit kar sakta hai
+══════════════════════════════════════ -->
+<div class="modal-overlay" id="leavePolicyModal">
+  <div class="modal" style="max-width:520px">
+    <h3>📄 Leave Policy</h3>
+    <div class="alert error" id="leavePolicyErr"></div>
+    <div id="leavePolicyViewWrap">
+      <div id="leavePolicyViewText" style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:var(--foreground);background:var(--muted);border-radius:10px;padding:14px;min-height:80px;max-height:50vh;overflow:auto">Loading…</div>
+    </div>
+    <div id="leavePolicyEditWrap" style="display:none">
+      <textarea id="leavePolicyEditText" style="min-height:220px"></textarea>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between;align-items:center">
+      <button class="btn btn-outline" onclick="closeModal('leavePolicyModal')">Close</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline" id="leavePolicyEditBtn" style="display:none" onclick="toggleLeavePolicyEdit(true)">✏️ Edit</button>
+        <button class="btn btn-outline" id="leavePolicyCancelEditBtn" style="display:none" onclick="toggleLeavePolicyEdit(false)">Cancel</button>
+        <button class="btn btn-primary" id="leavePolicySaveBtn" style="display:none" onclick="saveLeavePolicy()">Save</button>
+      </div>
     </div>
   </div>
 </div>

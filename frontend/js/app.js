@@ -620,26 +620,94 @@ async function loadLeaves() {
     </div>`;
 }
 
+// Approve — seedha karo. Reject — apna modal khulta hai (reason + policy
+// email + warning letter option), openRejectLeave() dekho.
 async function decideLeave(id, action) {
-  let note = '';
-  if (action === 'rejected') {
-    note = (await promptDialog('Why is this leave being rejected? (optional)', {title:'Reject Leave', okText:'Reject', placeholder:'Reason (optional)'})) || '';
-  }
-  const r = await api(`/api/leaves/${id}`,'PUT',{action, note});
+  if (action === 'rejected') { openRejectLeave(id); return; }
+  const r = await api(`/api/leaves/${id}`,'PUT',{action, note:''});
   if (r.error) { showToast(r.error,'error'); return; }
-  if (action === 'approved' && r.shifted > 0) {
-    showToast(`✅ Leave approved! ${r.shifted} checklist task(s) moved to the next working day`);
-  } else if (action === 'approved') {
-    showToast('✅ Leave approved!');
-  } else {
-    showToast('Leave rejected');
-  }
-  // Jo bhi page khula ho use refresh karo (Leave page ya Approvals ka Leave tab)
+  showToast('✅ Leave approved!');
+  _afterLeaveDecision();
+}
+
+// Jo bhi page khula ho use refresh karo (Leave page ya Approvals ka Leave tab)
+function _afterLeaveDecision() {
   if (document.getElementById('page-leaves').classList.contains('active')) loadLeaves();
   if (document.getElementById('leaveApprovalsPanel').style.display !== 'none') loadLeaveApprovals();
   loadLeaveBadge();
   loadApprovalBadge();
   loadDashboard();
+}
+
+function openRejectLeave(id) {
+  const l = _leaveApprovalsCache.find(x => String(x.id) === String(id));
+  document.getElementById('rejectLeaveErr').style.display = 'none';
+  document.getElementById('rjLeaveId').value = id;
+  document.getElementById('rjReason').value = '';
+  document.getElementById('rjSendPolicy').checked = false;
+  document.getElementById('rjSendWarning').checked = false;
+  document.getElementById('rjWarningBox').style.display = 'none';
+  const name = l ? l.userName : 'this employee';
+  const dates = l ? `${fmtDate(l.from_date)}${l.to_date!==l.from_date?` → ${fmtDate(l.to_date)}`:''}` : '';
+  document.getElementById('rjLeaveMeta').textContent = dates ? `${name} — ${dates}` : name;
+  document.getElementById('rjWarningText').value =
+    `This is to bring to your attention that your recent leave request${dates?` for ${dates}`:''} was not approved. `+
+    `Please ensure future leave requests are submitted in advance and in line with company policy. `+
+    `Continued unapproved absence may result in further disciplinary action.`;
+  document.getElementById('rejectLeaveModal').classList.add('open');
+}
+
+function toggleRejectWarningBox() {
+  document.getElementById('rjWarningBox').style.display = document.getElementById('rjSendWarning').checked ? 'block' : 'none';
+}
+
+async function submitRejectLeave() {
+  const id = document.getElementById('rjLeaveId').value;
+  const note = document.getElementById('rjReason').value.trim();
+  const sendPolicy = document.getElementById('rjSendPolicy').checked;
+  const sendWarning = document.getElementById('rjSendWarning').checked;
+  const warningLetter = sendWarning ? document.getElementById('rjWarningText').value.trim() : '';
+  const err = document.getElementById('rejectLeaveErr');
+  err.style.display = 'none';
+  if (sendWarning && !warningLetter) { err.textContent = 'Warning letter text cannot be empty'; err.style.display = 'block'; return; }
+  const r = await api(`/api/leaves/${id}`, 'PUT', { action: 'rejected', note, sendPolicy, warningLetter });
+  if (r.error) { err.textContent = r.error; err.style.display = 'block'; return; }
+  closeModal('rejectLeaveModal');
+  showToast('Leave rejected' + (sendPolicy || warningLetter ? ' — email(s) sent' : ''));
+  _afterLeaveDecision();
+}
+
+// ── Leave Policy — sab dekh sakte hain, sirf admin edit kar sakta hai ──
+async function openLeavePolicy() {
+  document.getElementById('leavePolicyErr').style.display = 'none';
+  toggleLeavePolicyEdit(false);
+  document.getElementById('leavePolicyViewText').textContent = 'Loading…';
+  document.getElementById('leavePolicyModal').classList.add('open');
+  const r = await api('/api/leaves/policy');
+  if (r.error) { document.getElementById('leavePolicyViewText').textContent = r.error; return; }
+  document.getElementById('leavePolicyViewText').textContent = r.text;
+  document.getElementById('leavePolicyEditText').value = r.text;
+}
+
+function toggleLeavePolicyEdit(editing) {
+  document.getElementById('leavePolicyViewWrap').style.display = editing ? 'none' : 'block';
+  document.getElementById('leavePolicyEditWrap').style.display = editing ? 'block' : 'none';
+  document.getElementById('leavePolicyEditBtn').style.display = (!editing && ME && ME.role === 'admin') ? '' : 'none';
+  document.getElementById('leavePolicyCancelEditBtn').style.display = editing ? '' : 'none';
+  document.getElementById('leavePolicySaveBtn').style.display = editing ? '' : 'none';
+  if (!editing) document.getElementById('leavePolicyEditText').value = document.getElementById('leavePolicyViewText').textContent;
+}
+
+async function saveLeavePolicy() {
+  const text = document.getElementById('leavePolicyEditText').value.trim();
+  const err = document.getElementById('leavePolicyErr');
+  err.style.display = 'none';
+  if (!text) { err.textContent = 'Policy text cannot be empty'; err.style.display = 'block'; return; }
+  const r = await api('/api/leaves/policy', 'PUT', { text });
+  if (r.error) { err.textContent = r.error; err.style.display = 'block'; return; }
+  document.getElementById('leavePolicyViewText').textContent = text;
+  toggleLeavePolicyEdit(false);
+  showToast('Leave policy updated!');
 }
 
 async function cancelLeave(id) {
@@ -3664,6 +3732,7 @@ function switchApprovalTab(tab, el) {
 
 // Approvals page ka Leave tab — sirf pending requests, approve/reject ke saath.
 // (Leave page par apply + poori history rehti hai.)
+let _leaveApprovalsCache = []; // openRejectLeave() ke liye — naam/dates yahan se milte hain
 async function loadLeaveApprovals() {
   const container = document.getElementById('leaveApprovalsContent');
   container.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Loading…</div>`;
@@ -3672,6 +3741,7 @@ async function loadLeaveApprovals() {
 
   // Apni khud ki leave approve nahi kar sakte, isliye woh yahan nahi dikhti
   const pending = (rows||[]).filter(l => l.status === 'pending' && String(l.user_id) !== String(ME.id));
+  _leaveApprovalsCache = pending;
   if (!pending.length) {
     container.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">✅ No pending leave requests!</div>`;
     return;

@@ -142,6 +142,14 @@ async function getNotifyTarget(userId) {
   } catch { return null; }
 }
 
+// Admin-typed free text (leave policy, warning letter) HTML email me jaata
+// hai — escape karo taaki koi galti se "<" wagera likh de to email ka layout
+// na toote.
+function escapeHtmlServer(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // Email template for delegation task
 function delegationEmailHtml({ assigneeName, assignerName, desc, dueDate, priority, approval, remarks }) {
   const appUrl = process.env.APP_URL || '#';
@@ -2114,6 +2122,33 @@ async function _isHRUser(uid) {
   } catch (_) { return false; }
 }
 
+// ── Leave Policy document — koi bhi padh sakta hai, sirf admin badal sakta
+// hai. Yahi text reject hone par employee ko email bhi ho sakta hai. ──
+const DEFAULT_LEAVE_POLICY =
+  'Leave Policy\n\n' +
+  '- Apply for leave at least 1 day in advance wherever possible.\n' +
+  '- Leaves are approved at the discretion of your Admin/HOD.\n' +
+  '- Repeated unapproved absence may result in a formal warning.\n\n' +
+  '(Admin: edit this text from the Leave page — "📄 Leave Policy" → Edit.)';
+
+app.get('/api/leaves/policy', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await db.query('SELECT value FROM app_settings WHERE key_name=?', ['leave_policy_document']);
+    res.json({ text: rows[0] ? rows[0].value : DEFAULT_LEAVE_POLICY });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
+});
+
+app.put('/api/leaves/policy', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const text = typeof req.body?.text === 'string' ? req.body.text : '';
+    if (!text.trim()) return res.status(400).json({ error: 'Policy text cannot be empty' });
+    await db.query(
+      `INSERT INTO app_settings (key_name,value) VALUES (?,?) ON CONFLICT (key_name) DO UPDATE SET value = EXCLUDED.value`,
+      ['leave_policy_document', text]);
+    res.json({ success: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
+});
+
 // List — role ke hisaab se: user apni, HOD apne dept ki, admin/pc/HR sabki
 app.get('/api/leaves', requireAuth, async (req, res) => {
   try {
@@ -2167,12 +2202,16 @@ app.put('/api/leaves/:id', requireAuth, async (req, res) => {
     // note ko string me normalize — non-string (number/array/object) aaye to reason skip.
     // Isse DB bind (mysql2 array ko '?' me galat expand karta hai) aur WA message dono safe.
     const note = typeof req.body?.note === 'string' ? req.body.note : '';
+    // Reject ke saath optional: leave policy email + warning letter (dono
+    // sirf 'rejected' par chalte hain, approve par ignore ho jaate hain).
+    const sendPolicy = req.body?.sendPolicy === true;
+    const warningLetter = typeof req.body?.warningLetter === 'string' ? req.body.warningLetter.trim() : '';
     if (!['approved','rejected'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
     const role = req.session.role, uid = req.session.userId;
     const [rows] = await db.query(
       `SELECT lr.*, TO_CHAR(lr.from_date,'YYYY-MM-DD') AS from_iso,
               TO_CHAR(lr.to_date,'YYYY-MM-DD') AS to_iso,
-              u.department, u.name AS user_name, u.phone AS user_phone
+              u.department, u.name AS user_name, u.phone AS user_phone, u.notification_email
        FROM leave_requests lr JOIN users u ON lr.user_id=u.id WHERE lr.id=?`, [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: 'Leave request not found' });
     const lv = rows[0];
@@ -2212,6 +2251,39 @@ app.put('/api/leaves/:id', requireAuth, async (req, res) => {
         }
       } catch (e) {
         console.error('  ❌ Leave decision WhatsApp prep failed:', e.message);
+      }
+    }
+
+    // Reject par: leave policy email + warning letter, dono optional aur
+    // fire-and-forget — email fail hone par bhi reject ka response na ruke.
+    if (action === 'rejected' && lv.notification_email) {
+      if (sendPolicy) {
+        (async () => {
+          const [pRows] = await db.query('SELECT value FROM app_settings WHERE key_name=?', ['leave_policy_document']);
+          const policyText = pRows[0] ? pRows[0].value : DEFAULT_LEAVE_POLICY;
+          await sendMail(
+            lv.notification_email,
+            `📄 Leave Policy — ${BRAND.company || BRAND.product}`,
+            `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+              <h2 style="color:${BRAND.palette.primary}">📄 Leave Policy</h2>
+              <p>Hi <b>${lv.user_name || 'there'}</b>, your recent leave request (${lv.from_iso}${lv.to_iso!==lv.from_iso?` → ${lv.to_iso}`:''}) was rejected. Please review the company's leave policy below.</p>
+              <div style="white-space:pre-wrap;background:#f6f9fc;border-radius:8px;padding:16px;font-size:14px;line-height:1.6">${escapeHtmlServer(policyText)}</div>
+            </div>`
+          );
+        })().catch(e => console.error('  ❌ Leave policy email failed:', e.message));
+      }
+      if (warningLetter) {
+        (async () => {
+          await sendMail(
+            lv.notification_email,
+            `⚠️ Warning Letter — ${BRAND.company || BRAND.product}`,
+            `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+              <h2 style="color:#c0392b">⚠️ Warning Letter</h2>
+              <p>Dear <b>${lv.user_name || ''}</b>,</p>
+              <div style="white-space:pre-wrap;font-size:14px;line-height:1.6">${escapeHtmlServer(warningLetter)}</div>
+            </div>`
+          );
+        })().catch(e => console.error('  ❌ Warning letter email failed:', e.message));
       }
     }
 
