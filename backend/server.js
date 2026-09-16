@@ -1265,7 +1265,13 @@ async function fetchSheetRows(sheet) {
 
 // Returns { perFms: [...], perUser: { uid: {pending,done,total} }, errors: [name] }
 // hodDept '' => admin/pc (sab kuch). hodDept set => sirf un steps jinme us dept ka doer hai.
-async function computeFmsStats(hodDept = '', collectPending = false) {
+// dateFrom/dateTo diye ho to sirf wahi rows ginti hain jinka PLANNED date us range
+// me aata hai (pending ho ya done, dono) — MIS/Employee Records ke delegation aur
+// checklist jaise hi (WHERE due_date BETWEEN ? AND ?). Pehle FMS in dono se date
+// range ignore karke hamesha "sab time" ka total deta tha — MIS ka date range
+// change karne par delegation/checklist ke numbers badalte the par FMS ke nahi.
+async function computeFmsStats(hodDept = '', collectPending = false, dateFrom = '', dateTo = '') {
+  const rangeMode = !!(dateFrom && dateTo);
   const result = { perFms: [], perUser: {}, errors: [] };
   if (collectPending) result.perUserPending = {}; // uid -> [ {fmsName, stepName, planValue, planDate, isLate} ]
   const _today = _istParts().dateStr;
@@ -1324,17 +1330,23 @@ async function computeFmsStats(hodDept = '', collectPending = false) {
       for (const row of rows) {
         const planVal = (row[planIdx] || '').trim();
         const actualVal = (row[actualIdx] || '').trim();
-        if (planVal && !actualVal) {
+        if (!planVal) continue; // plan hi nahi bhara — kisi bhi mode me nahi ginta
+
+        let planDate = '';
+        if (rangeMode || collectPending) ({ planDate } = _parsePlanCellDate(planVal));
+        if (rangeMode && (!planDate || planDate < dateFrom || planDate > dateTo)) continue; // range ke bahar
+
+        if (!actualVal) {
           stepPending++;
           if (collectPending) {
-            const { planDate } = _parsePlanCellDate(planVal);
             stepPendingRows.push({
               fmsName, stepName: step.step_name, planValue: planVal,
               planDate, isLate: !!(planDate && planDate < _today)
             });
           }
+        } else {
+          stepDone++;
         }
-        else if (planVal && actualVal) stepDone++;
       }
 
       fmsPending += stepPending;
@@ -2631,7 +2643,9 @@ app.get('/api/mis/all', requireAuth, async (req, res) => {
       // ROLE-INDEPENDENT: hamesha all-doers crediting (hodDept='') taaki ek hi employee ka
       // FMS total/score admin aur HOD dono ko BILKUL EK JAISA dikhe. Dept ka filter sirf
       // niche rows (kaun-kaun employee dikhega) par lagta hai — numbers par nahi.
-      const fmsStats = await computeFmsStats('');
+      // start/end pass karna zaroori hai — warna FMS delegation/checklist se alag
+      // hamesha "sab time" ka total deta, MIS ka date range badalne par bhi na badalta.
+      const fmsStats = await computeFmsStats('', false, start, end);
       fmsUserMap = fmsStats.perUser || {};
       fmsErrors = fmsStats.errors || [];
     } catch (e) { fmsErrors = ['FMS data unavailable']; }
@@ -2703,7 +2717,7 @@ app.get('/api/mis/fms', requireAuth, async (req, res) => {
     }
 
     // Same shared engine jo /api/mis/all use karta hai => numbers HAMESHA match honge
-    const fmsStats = await computeFmsStats(hodDept);
+    const fmsStats = await computeFmsStats(hodDept, false, start, end);
     res.json(fmsStats.perFms);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
 });

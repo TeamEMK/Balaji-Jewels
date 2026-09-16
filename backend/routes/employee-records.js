@@ -92,7 +92,10 @@ module.exports = function registerEmployeeRecordsRoutes(app, ctx) {
       // ── FMS (ROLE-INDEPENDENT: hamesha all-doers crediting) + pending detail ──
       let fmsPerUser = {}, fmsPerUserPending = {}, fmsErrors = [];
       try {
-        const fmsStats = await computeFmsStats('', true);
+        // start/end pass karna zaroori hai — warna FMS delegation/checklist (jo
+        // upar due_date BETWEEN ? AND ? se scoped hain) se alag hamesha "sab
+        // time" ka total deta, date range badalne par bhi na badalta.
+        const fmsStats = await computeFmsStats('', true, start, end);
         fmsPerUser = fmsStats.perUser || {};
         fmsPerUserPending = fmsStats.perUserPending || {};
         fmsErrors = fmsStats.errors || [];
