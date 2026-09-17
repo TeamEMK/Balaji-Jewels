@@ -548,7 +548,6 @@ function dtToday() { return new Date().toISOString().split('T')[0]; }
 async function initDailyTaskPage() {
   document.getElementById('dtDoerDisplay').value = ME.name;
   document.getElementById('dtManageClientsBtn').style.display = (ME.role === 'admin') ? '' : 'none';
-  document.getElementById('dtSyncFmsBtn').style.display = (ME.role === 'admin') ? '' : 'none';
   const dateEl = document.getElementById('dtEntryDate');
   if (!dateEl.value) dateEl.value = dtToday();
   dtType = 'daily';
