@@ -347,12 +347,14 @@ async function init() {
     // par un APIs par bekaar calls jaati rehti hain aur FMS ka pending pop-up
     // aisa page kholne ko kehta hai jo sidebar me hai hi nahi.
     if (!isPageDisabled('leaves')) loadLeaveBadge();
+    if (!isPageDisabled('leaves')) loadMyLeaveDecidedBadge(); // apni approve/reject hui leave — email na aaye to bhi yahan dikh jaye
     if (!isPageDisabled('query'))  loadQueryBadge();
     if (!isPageDisabled('fms-tasks')) startFmsPendingReminders(); // login par + har 2 ghante FMS pending pop-up (doers ko)
     // Refresh badges every 30 seconds
     setInterval(loadApprovalBadge, 30000);
     setInterval(loadTransferBadge, 30000);
     if (!isPageDisabled('leaves')) setInterval(loadLeaveBadge, 30000);
+    if (!isPageDisabled('leaves')) setInterval(loadMyLeaveDecidedBadge, 30000);
     if (!isPageDisabled('query'))  setInterval(loadQueryBadge, 30000);
   } catch(e) { console.error('Init error:', e); window.location.replace('/'); }
 }
@@ -749,12 +751,37 @@ async function submitLeave() {
   }
 }
 
+// Apni leave approve/reject hote hi email jaana chahiye tha, lekin SMTP setup
+// na ho to wo silently fail ho jaata hai (koi error nahi dikhta) — isliye
+// in-app badge bhi rakha hai, jo email par depend nahi karta. Query page ke
+// _qSeen/_qMarkSeen jaisa hi pattern.
+function _myLeaveSeen() { try { return new Set(JSON.parse(localStorage.getItem('myLeaveSeen_' + ME.id) || '[]')); } catch(e) { return new Set(); } }
+function _myLeaveMarkSeen(ids) {
+  try {
+    const s = _myLeaveSeen(); ids.forEach(i => s.add(i));
+    localStorage.setItem('myLeaveSeen_' + ME.id, JSON.stringify([...s]));
+  } catch(e) {}
+}
+async function loadMyLeaveDecidedBadge() {
+  const badge = document.getElementById('myLeaveDecidedBadge');
+  if (!badge || !ME) return;
+  const rows = await api('/api/leaves');
+  if (!Array.isArray(rows)) return;
+  const seen = _myLeaveSeen();
+  const mine = rows.filter(l => String(l.user_id) === String(ME.id) && l.status !== 'pending' && !seen.has(l.id));
+  if (mine.length) { badge.textContent = mine.length; badge.style.display = 'flex'; }
+  else badge.style.display = 'none';
+}
+
 async function loadLeaves() {
   const container = document.getElementById('leavesContent');
   container.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Loading…</div>`;
   const rows = await api(withSeg('/api/leaves'));
   if (rows.error) { container.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${rows.error}</div>`; return; }
   if (!rows.length) { container.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">No leave requests yet</div>`; return; }
+  // Page khul gaya, matlab apni decided leaves dekh li — badge clear karo
+  _myLeaveMarkSeen(rows.filter(l => String(l.user_id) === String(ME.id) && l.status !== 'pending').map(l => l.id));
+  loadMyLeaveDecidedBadge();
 
   // Approve/Reject yahan nahi — wo Approvals page ke Leave Requests tab me hai.
   // Yahan sirf apply + history + apni pending request cancel karna.
@@ -769,7 +796,8 @@ async function loadLeaves() {
       <td style="white-space:nowrap;font-size:12px">${fmtDate(l.from_date)}${l.to_date!==l.from_date?` → ${fmtDate(l.to_date)}`:''}</td>
       <td style="color:var(--muted-foreground);font-size:12px">${l.reason||'—'}</td>
       <td><span class="status-badge" style="${LEAVE_STATUS_STYLE[l.status]||''}">${l.status.charAt(0).toUpperCase()+l.status.slice(1)}</span>
-        ${l.approverName?`<div style="font-size:10px;color:var(--muted-foreground);margin-top:2px">by ${l.approverName}</div>`:''}</td>
+        ${l.approverName?`<div style="font-size:10px;color:var(--muted-foreground);margin-top:2px">by ${l.approverName}</div>`:''}
+        ${l.status==='rejected' && l.approver_note ? `<div style="font-size:11px;color:var(--destructive);margin-top:4px;max-width:220px;line-height:1.4"><b>Reason:</b> ${escapeHtml(l.approver_note)}</div>` : ''}</td>
       <td style="white-space:nowrap">
         ${showCancel?`<button class="action-btn delete" onclick="cancelLeave(${l.id})" title="Delete this leave request" style="padding:4px 9px;font-size:14px">🗑️</button>`
                     :'<span style="color:var(--muted-foreground)">—</span>'}
