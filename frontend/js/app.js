@@ -540,6 +540,7 @@ function _restoreActivePage() {
 // ══════════════════════════════════════════════════════
 let dtType = 'daily';
 let dtClients = [];
+let dtDepartments = []; // existing Departments list (Users me jo use hoti hai) reuse ki
 let dtRowCounter = 0; // har row ko unique id dene ke liye (DOM lookup ke liye)
 
 function dtToday() { return new Date().toISOString().split('T')[0]; }
@@ -552,8 +553,9 @@ async function initDailyTaskPage() {
   dtType = 'daily';
   document.getElementById('dtTabDaily').classList.add('active');
   document.getElementById('dtTabExtra').classList.remove('active');
-  const clients = await api('/api/daily-task/clients');
+  const [clients, depts] = await Promise.all([api('/api/daily-task/clients'), api('/api/departments')]);
   dtClients = Array.isArray(clients) ? clients : [];
+  dtDepartments = Array.isArray(depts) ? depts : [];
   await dtLoadForDate();
   dtLoadPastSubmissions();
 }
@@ -599,19 +601,29 @@ function dtClientOptionsHtml(selected) {
   const opts = dtClients.map(c => `<option value="${escapeHtml(c)}" ${c===selected?'selected':''}>${escapeHtml(c)}</option>`).join('');
   return `<option value="">--select--</option>${opts}`;
 }
+function dtDeptOptionsHtml(selected) {
+  // Selected department list me na ho (jaise user ka apna department ab
+  // renamed/deleted ho chuka) to bhi option list me dikhta rahe — warna
+  // wo silently khaali select ho jaata aur pehle se bhara data ud jaata.
+  const list = selected && !dtDepartments.includes(selected) ? [selected, ...dtDepartments] : dtDepartments;
+  const opts = list.map(d => `<option value="${escapeHtml(d)}" ${d===selected?'selected':''}>${escapeHtml(d)}</option>`).join('');
+  return `<option value="">--select--</option>${opts}`;
+}
 
 function dtAddRow(prefill) {
   prefill = prefill || {};
   const id = ++dtRowCounter;
   const tr = document.createElement('tr');
   tr.dataset.rowId = id;
+  const cellStyle = 'padding:6px;border:1px solid var(--border);border-top:none';
+  const fieldStyle = 'width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;background:var(--card);color:var(--foreground)';
   tr.innerHTML = `
-    <td style="padding:6px"><select class="dt-client" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;background:var(--card);color:var(--foreground)">${dtClientOptionsHtml(prefill.clientName||'')}</select></td>
-    <td style="padding:6px"><input type="text" class="dt-dept" value="${escapeHtml(prefill.department||'')}" placeholder="Department" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px"/></td>
-    <td style="padding:6px"><textarea class="dt-desc" placeholder="What did you do?" style="width:100%;min-height:38px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;resize:vertical">${escapeHtml(prefill.description||'')}</textarea></td>
-    <td style="padding:6px"><input type="number" min="0" class="dt-mins" value="${prefill.minutes||''}" placeholder="0" oninput="dtRecalcTotal()" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px"/></td>
-    <td style="padding:6px;text-align:center"><button class="btn btn-outline btn-sm" style="color:var(--success)" onclick="dtDupRow(this)" title="Duplicate row">DUP</button></td>
-    <td style="padding:6px;text-align:center"><button class="btn btn-outline btn-sm" style="color:var(--destructive)" onclick="dtDeleteRow(this)" title="Delete row">DEL</button></td>`;
+    <td style="${cellStyle}"><select class="dt-client" style="${fieldStyle}">${dtClientOptionsHtml(prefill.clientName||'')}</select></td>
+    <td style="${cellStyle}"><select class="dt-dept" style="${fieldStyle}">${dtDeptOptionsHtml(prefill.department||'')}</select></td>
+    <td style="${cellStyle}"><textarea class="dt-desc" placeholder="What did you do?" style="${fieldStyle};min-height:38px;resize:vertical">${escapeHtml(prefill.description||'')}</textarea></td>
+    <td style="${cellStyle}"><input type="number" min="0" class="dt-mins" value="${prefill.minutes||''}" placeholder="0" oninput="dtRecalcTotal()" style="${fieldStyle}"/></td>
+    <td style="${cellStyle};text-align:center"><button class="btn btn-outline btn-sm" style="color:var(--success)" onclick="dtDupRow(this)" title="Duplicate row">DUP</button></td>
+    <td style="${cellStyle};text-align:center"><button class="btn btn-outline btn-sm" style="color:var(--destructive)" onclick="dtDeleteRow(this)" title="Delete row">DEL</button></td>`;
   document.getElementById('dtRowsBody').appendChild(tr);
 }
 

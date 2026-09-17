@@ -635,26 +635,26 @@
     </div>
 
     <div style="background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px;margin-bottom:16px">
-      <div class="form-row">
-        <div class="form-group">
+      <div style="display:flex;gap:14px;margin-bottom:15px;flex-wrap:wrap">
+        <div class="form-group" style="margin-bottom:0;width:170px">
           <label>Entry Date</label>
           <input type="date" id="dtEntryDate" onchange="dtLoadForDate()"/>
         </div>
-        <div class="form-group">
+        <div class="form-group" style="margin-bottom:0;width:200px">
           <label>Doer</label>
           <input type="text" id="dtDoerDisplay" disabled/>
         </div>
       </div>
 
-      <div style="overflow-x:auto">
+      <div style="overflow-x:auto;border:1px solid var(--primary);border-radius:8px">
         <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:760px">
-          <thead><tr style="background:var(--muted);text-align:left">
-            <th style="padding:8px 10px;min-width:160px">Client Name</th>
-            <th style="padding:8px 10px;min-width:160px">Department</th>
-            <th style="padding:8px 10px">Task Description</th>
-            <th style="padding:8px 10px;width:90px">Time (min)</th>
-            <th style="padding:8px 10px;width:50px">Dup</th>
-            <th style="padding:8px 10px;width:50px">Del</th>
+          <thead><tr style="background:var(--primary);color:var(--primary-foreground);text-align:left">
+            <th style="padding:9px 10px;min-width:160px;border-right:1px solid color-mix(in srgb,var(--primary-foreground) 25%,transparent)">Client Name</th>
+            <th style="padding:9px 10px;min-width:160px;border-right:1px solid color-mix(in srgb,var(--primary-foreground) 25%,transparent)">Department</th>
+            <th style="padding:9px 10px;border-right:1px solid color-mix(in srgb,var(--primary-foreground) 25%,transparent)">Task Description</th>
+            <th style="padding:9px 10px;width:90px;border-right:1px solid color-mix(in srgb,var(--primary-foreground) 25%,transparent)">Time (min)</th>
+            <th style="padding:9px 10px;width:50px;border-right:1px solid color-mix(in srgb,var(--primary-foreground) 25%,transparent)">Dup</th>
+            <th style="padding:9px 10px;width:50px">Del</th>
           </tr></thead>
           <tbody id="dtRowsBody"></tbody>
         </table>
