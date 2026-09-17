@@ -1486,6 +1486,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
 require('./routes/dashboard')(app, ROUTE_CTX);
 require('./routes/catalog')(app, ROUTE_CTX);
 require('./routes/payroll')(app, ROUTE_CTX);
+require('./routes/daily-task')(app, ROUTE_CTX);
 
 // ══════════════════════════════════════════════════════
 // TASKS

@@ -422,7 +422,7 @@ function setMinDates() {
 // ══════════════════════════════════════════════════════
 // NAVIGATION
 // ══════════════════════════════════════════════════════
-const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',query:'Query',users:'Users',profile:'Profile',mis:'MIS Report',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client'};
+const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',query:'Query',users:'Users',profile:'Profile',mis:'MIS Report',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client'};
 
 // Sidebar par cursor jaate hi (jab wo expand hone lagta hai) koi bhi khula dropdown
 // band kar do — warna native select popup sidebar ke upar overlap dikhta hai.
@@ -498,6 +498,7 @@ function navigate(page, el) {
   if (page==='dashboard') loadDashboard();
   if (page==='alltasks') loadAllTasks();
   if (page==='catalog') loadCatalog();
+  if (page==='daily-task') initDailyTaskPage();
   if (page==='users') loadUsers();
   // Page khulte hi teeno tabs ke counts refresh — yahi wo lamha hai jab user
   // dekhta hai ki request kis tab me padi hai.
@@ -533,10 +534,147 @@ function _restoreActivePage() {
 }
 
 // ══════════════════════════════════════════════════════
-// LEAVE
+// DAILY TASK — timesheet: client + department + task + time (min), roz
+// submit karna. 'daily' aur 'extra_working' do tabs, ek hi form reuse hoti
+// hai (sirf log_type badalta hai).
 // ══════════════════════════════════════════════════════
-// extra_working ab apply karne ke liye offer nahi hota, lekin label yahan rakha hai
-// taaki purane records raw enum value ki jagah sahi naam dikhayein
+let dtType = 'daily';
+let dtClients = [];
+let dtRowCounter = 0; // har row ko unique id dene ke liye (DOM lookup ke liye)
+
+function dtToday() { return new Date().toISOString().split('T')[0]; }
+
+async function initDailyTaskPage() {
+  document.getElementById('dtDoerDisplay').value = ME.name;
+  document.getElementById('dtManageClientsBtn').style.display = (ME.role === 'admin') ? '' : 'none';
+  const dateEl = document.getElementById('dtEntryDate');
+  if (!dateEl.value) dateEl.value = dtToday();
+  dtType = 'daily';
+  document.getElementById('dtTabDaily').classList.add('active');
+  document.getElementById('dtTabExtra').classList.remove('active');
+  const clients = await api('/api/daily-task/clients');
+  dtClients = Array.isArray(clients) ? clients : [];
+  await dtLoadForDate();
+  dtLoadPastSubmissions();
+}
+
+// Admin — naya client naam list me add karo (dropdown turant refresh ho jaata hai)
+async function dtManageClients() {
+  const name = await promptDialog('Add a new client name (this appears in the dropdown for everyone):', { title: 'Manage Clients', okText: 'Add', placeholder: 'Client name' });
+  if (!name || !name.trim()) return;
+  const r = await api('/api/daily-task/clients', 'POST', { name: name.trim() });
+  if (r.error) { showToast(r.error, 'error'); return; }
+  dtClients = r;
+  document.querySelectorAll('#dtRowsBody .dt-client').forEach(sel => {
+    const cur = sel.value;
+    sel.innerHTML = dtClientOptionsHtml(cur);
+  });
+  showToast('Client added!');
+}
+
+function dtSwitchType(type) {
+  dtType = type;
+  document.getElementById('dtTabDaily').classList.toggle('active', type === 'daily');
+  document.getElementById('dtTabExtra').classList.toggle('active', type === 'extra_working');
+  dtLoadForDate();
+  dtLoadPastSubmissions();
+}
+
+// Entry date badalne par (ya tab switch par) — us din ke liye pehle se saved
+// rows load karo (edit karne ke liye), warna ek khaali row se shuru karo.
+async function dtLoadForDate() {
+  const date = document.getElementById('dtEntryDate').value || dtToday();
+  const body = document.getElementById('dtRowsBody');
+  body.innerHTML = '';
+  const rows = await api(`/api/daily-task/mine/${date}?logType=${dtType}`);
+  if (Array.isArray(rows) && rows.length) {
+    rows.forEach(r => dtAddRow({ clientName: r.client_name, department: r.department, description: r.description, minutes: r.minutes }));
+  } else {
+    dtAddRow({ department: ME.department || '' });
+  }
+  dtRecalcTotal();
+}
+
+function dtClientOptionsHtml(selected) {
+  const opts = dtClients.map(c => `<option value="${escapeHtml(c)}" ${c===selected?'selected':''}>${escapeHtml(c)}</option>`).join('');
+  return `<option value="">--select--</option>${opts}`;
+}
+
+function dtAddRow(prefill) {
+  prefill = prefill || {};
+  const id = ++dtRowCounter;
+  const tr = document.createElement('tr');
+  tr.dataset.rowId = id;
+  tr.innerHTML = `
+    <td style="padding:6px"><select class="dt-client" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;background:var(--card);color:var(--foreground)">${dtClientOptionsHtml(prefill.clientName||'')}</select></td>
+    <td style="padding:6px"><input type="text" class="dt-dept" value="${escapeHtml(prefill.department||'')}" placeholder="Department" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px"/></td>
+    <td style="padding:6px"><textarea class="dt-desc" placeholder="What did you do?" style="width:100%;min-height:38px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;resize:vertical">${escapeHtml(prefill.description||'')}</textarea></td>
+    <td style="padding:6px"><input type="number" min="0" class="dt-mins" value="${prefill.minutes||''}" placeholder="0" oninput="dtRecalcTotal()" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px"/></td>
+    <td style="padding:6px;text-align:center"><button class="btn btn-outline btn-sm" style="color:var(--success)" onclick="dtDupRow(this)" title="Duplicate row">DUP</button></td>
+    <td style="padding:6px;text-align:center"><button class="btn btn-outline btn-sm" style="color:var(--destructive)" onclick="dtDeleteRow(this)" title="Delete row">DEL</button></td>`;
+  document.getElementById('dtRowsBody').appendChild(tr);
+}
+
+function dtDupRow(btn) {
+  const tr = btn.closest('tr');
+  dtAddRow({
+    clientName: tr.querySelector('.dt-client').value,
+    department: tr.querySelector('.dt-dept').value,
+    description: tr.querySelector('.dt-desc').value,
+    minutes: tr.querySelector('.dt-mins').value,
+  });
+  dtRecalcTotal();
+}
+
+function dtDeleteRow(btn) {
+  const body = document.getElementById('dtRowsBody');
+  if (body.children.length <= 1) { btn.closest('tr').querySelectorAll('input,select,textarea').forEach(el => el.value=''); dtRecalcTotal(); return; }
+  btn.closest('tr').remove();
+  dtRecalcTotal();
+}
+
+function dtRecalcTotal() {
+  let total = 0;
+  document.querySelectorAll('#dtRowsBody .dt-mins').forEach(el => { total += parseInt(el.value, 10) || 0; });
+  document.getElementById('dtTotalDuration').textContent = total;
+}
+
+async function dtSubmitAll() {
+  const entryDate = document.getElementById('dtEntryDate').value;
+  if (!entryDate) { showToast('Select an entry date', 'error'); return; }
+  const rows = [...document.querySelectorAll('#dtRowsBody tr')].map(tr => ({
+    clientName: tr.querySelector('.dt-client').value,
+    department: tr.querySelector('.dt-dept').value,
+    description: tr.querySelector('.dt-desc').value.trim(),
+    minutes: tr.querySelector('.dt-mins').value,
+  }));
+  const r = await api('/api/daily-task', 'POST', { entryDate, logType: dtType, rows });
+  if (r.error) { showToast(r.error, 'error'); return; }
+  showToast(`✅ ${r.count} task(s) submitted for ${fmtDate(entryDate)}!`);
+  dtLoadPastSubmissions();
+}
+
+async function dtLoadPastSubmissions() {
+  const box = document.getElementById('dtPastSubmissions');
+  box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border)">Loading…</div>`;
+  const rows = await api(`/api/daily-task/mine?logType=${dtType}`);
+  if (rows.error) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${rows.error}</div>`; return; }
+  if (!rows.length) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border)">No submissions yet</div>`; return; }
+  box.innerHTML = rows.map(r => `
+    <div class="dt-past-card" onclick="dtOpenPastDate('${r.date}')" style="display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:8px;cursor:pointer">
+      <span style="font-weight:600;color:var(--foreground)">📅 ${fmtDate(r.date)}</span>
+      <span style="font-size:11px;background:var(--muted);color:var(--muted-foreground);padding:2px 8px;border-radius:8px">${r.count} TASKS</span>
+      <span style="font-size:11px;background:color-mix(in srgb,var(--warning) 12%,transparent);color:var(--warning);padding:2px 8px;border-radius:8px;font-weight:600">${r.totalMinutes} MIN TOTAL</span>
+    </div>`).join('');
+}
+
+// Purani submission pe click karo to wahi date form me khul jaaye (edit ke liye)
+function dtOpenPastDate(date) {
+  document.getElementById('dtEntryDate').value = date;
+  dtLoadForDate();
+  window.scrollTo(0, 0);
+}
+
 const LEAVE_TYPE_LABEL = { full_day:'Full Day', half_day:'Half Day', work_from_home:'Work From Home', extra_working:'Extra Working' };
 const LEAVE_STATUS_STYLE = {
   pending:  'background:color-mix(in srgb,var(--warning) 12%,transparent);color:var(--warning)',

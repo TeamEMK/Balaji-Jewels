@@ -53,6 +53,10 @@
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
       <span class="nav-label-text">All Tasks</span>
     </div>
+    <div class="nav-item" id="nav-daily-task" onclick="navigate('daily-task',this)">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <span class="nav-label-text">Daily Task</span>
+    </div>
     <div class="nav-item" id="nav-catalog" onclick="navigate('catalog',this)">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375C2.754 3.75 2.25 4.254 2.25 4.875v1.5c0 .621.504 1.125 1.125 1.125z"/></svg>
       <span class="nav-label-text">Catalog</span>
@@ -612,6 +616,61 @@
         Select date range and click Generate
       </div>
     </div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       DAILY TASK — timesheet: har employee roz client+department+task ke
+       hisaab se apna time log karta hai.
+  ══════════════════════════════════════ -->
+  <div id="page-daily-task" class="page">
+    <div class="page-header">
+      <div class="tab-group" id="dtTypeTabGroup">
+        <div class="tab active" id="dtTabDaily" onclick="dtSwitchType('daily')">📋 Daily Task</div>
+        <div class="tab" id="dtTabExtra" onclick="dtSwitchType('extra_working')">⚡ Extra Working</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:12px;color:var(--muted-foreground)">Log the time you spent today by client and department.</div>
+        <button class="btn btn-outline btn-sm" id="dtManageClientsBtn" style="display:none" onclick="dtManageClients()">+ Manage Clients</button>
+      </div>
+    </div>
+
+    <div style="background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px;margin-bottom:16px">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Entry Date</label>
+          <input type="date" id="dtEntryDate" onchange="dtLoadForDate()"/>
+        </div>
+        <div class="form-group">
+          <label>Doer</label>
+          <input type="text" id="dtDoerDisplay" disabled/>
+        </div>
+      </div>
+
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:760px">
+          <thead><tr style="background:var(--muted);text-align:left">
+            <th style="padding:8px 10px;min-width:160px">Client Name</th>
+            <th style="padding:8px 10px;min-width:160px">Department</th>
+            <th style="padding:8px 10px">Task Description</th>
+            <th style="padding:8px 10px;width:90px">Time (min)</th>
+            <th style="padding:8px 10px;width:50px">Dup</th>
+            <th style="padding:8px 10px;width:50px">Del</th>
+          </tr></thead>
+          <tbody id="dtRowsBody"></tbody>
+        </table>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+        <div style="font-size:12px;font-weight:600;color:var(--muted-foreground);text-transform:uppercase">Total Duration: <span id="dtTotalDuration" style="color:var(--warning);font-size:18px;font-weight:700">0</span> min</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline" onclick="dtAddRow()">+ Add Row</button>
+          <button class="btn btn-primary" onclick="dtSubmitAll()">Submit All →</button>
+        </div>
+      </div>
+    </div>
+
+    <div style="font-size:14px;font-weight:700;color:var(--foreground);margin-bottom:10px">🗄️ My Past Submissions</div>
+    <div id="dtPastSubmissions"></div>
   </div>
 
   <!-- ══════════════════════════════════════
