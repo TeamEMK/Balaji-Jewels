@@ -548,6 +548,7 @@ function dtToday() { return new Date().toISOString().split('T')[0]; }
 async function initDailyTaskPage() {
   document.getElementById('dtDoerDisplay').value = ME.name;
   document.getElementById('dtManageClientsBtn').style.display = (ME.role === 'admin') ? '' : 'none';
+  document.getElementById('dtSyncFmsBtn').style.display = (ME.role === 'admin') ? '' : 'none';
   const dateEl = document.getElementById('dtEntryDate');
   if (!dateEl.value) dateEl.value = dtToday();
   dtType = 'daily';
@@ -572,6 +573,26 @@ async function dtManageClients() {
     sel.innerHTML = dtClientOptionsHtml(cur);
   });
   showToast('Client added!');
+}
+
+// Admin — FMS sheets ("Order to Quotation" jaisi) ke "Client Name" column
+// se saare unique naam khud utha ke list me jod do. Dobara chalane par sirf
+// naye naam add honge, purane duplicate nahi honge.
+async function dtSyncClientsFromFms() {
+  const btn = document.getElementById('dtSyncFmsBtn');
+  btn.disabled = true; btn.textContent = '⏳ Syncing…';
+  try {
+    const r = await api('/api/daily-task/clients/sync-fms', 'POST');
+    if (r.error) { showToast(r.error, 'error'); return; }
+    dtClients = r.clients;
+    document.querySelectorAll('#dtRowsBody .dt-client').forEach(sel => {
+      const cur = sel.value;
+      sel.innerHTML = dtClientOptionsHtml(cur);
+    });
+    showToast(r.added ? `✅ ${r.added} new client(s) added from FMS! (${r.total} total)` : `No new clients found in FMS (${r.total} already in list)`);
+  } finally {
+    btn.disabled = false; btn.textContent = '🔄 Sync from FMS';
+  }
 }
 
 function dtSwitchType(type) {
@@ -615,8 +636,8 @@ function dtAddRow(prefill) {
   const id = ++dtRowCounter;
   const tr = document.createElement('tr');
   tr.dataset.rowId = id;
-  const cellStyle = 'padding:6px;border:1px solid var(--border);border-top:none';
-  const fieldStyle = 'width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;background:var(--card);color:var(--foreground)';
+  const cellStyle = 'padding:8px 10px;border-bottom:1px solid var(--border)';
+  const fieldStyle = 'width:100%;padding:7px 9px;border:1.5px solid var(--border);border-radius:7px;font-size:13px;font-family:\'Inter\',sans-serif;outline:none;background:var(--card);color:var(--foreground)';
   tr.innerHTML = `
     <td style="${cellStyle}"><select class="dt-client" style="${fieldStyle}">${dtClientOptionsHtml(prefill.clientName||'')}</select></td>
     <td style="${cellStyle}"><select class="dt-dept" style="${fieldStyle}">${dtDeptOptionsHtml(prefill.department||'')}</select></td>
