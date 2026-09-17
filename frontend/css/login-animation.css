@@ -56,6 +56,29 @@
   background:var(--background);
 }
 
+/* ── Sparkling diamonds — jewelry business hai, isliye baayein panel me
+   bikhre hue chhote heere jo asli heere jaisa twinkle/glow karte hain.
+   Har ek apni size/rafta/der se chamakta hai (--dsize/--ddur/--ddelay har
+   span par inline), isliye sab ek saath nahi jagmagate — natural lagta hai.
+   Mascots se PEHLE hain DOM me, isliye unke peeche rehte hain. ── */
+.diamond-field{ position:absolute; inset:0; pointer-events:none; z-index:0; overflow:hidden; }
+.diamond-sparkle{
+  position:absolute;
+  font-size:var(--dsize,14px);
+  line-height:1;
+  opacity:0;
+  filter:
+    drop-shadow(0 0 3px rgba(255,255,255,.95))
+    drop-shadow(0 0 7px rgba(255,255,255,.7))
+    drop-shadow(0 0 14px rgba(180,220,255,.55));
+  animation:diamondTwinkle var(--ddur,3s) ease-in-out var(--ddelay,0s) infinite;
+}
+@keyframes diamondTwinkle{
+  0%,100% { opacity:0;   transform:scale(.35) rotate(-6deg); }
+  50%     { opacity:1;   transform:scale(1.1)  rotate(8deg);  }
+  75%     { opacity:.55; transform:scale(.8)   rotate(4deg);  }
+}
+
 /* ── Mascots ── */
 .mascots{
   /* clamp isliye ki bade monitor par ye card se kaafi bada dikhe (wahi to
