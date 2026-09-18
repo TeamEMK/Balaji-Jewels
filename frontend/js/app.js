@@ -5094,10 +5094,12 @@ async function openAllMISDetail(userId, userName) {
   const start = document.getElementById('misStart').value;
   const end   = document.getElementById('misEnd').value;
 
-  // Fetch task details for both types
-  const [delDetail, chlDetail] = await Promise.all([
+  // Fetch task details for all three types
+  const fmsHasEntries = (emp.fms && emp.fms.total > 0);
+  const [delDetail, chlDetail, fmsDetail] = await Promise.all([
     emp.delegation.total > 0 ? api(`/api/mis/detail?userId=${userId}&type=delegation&start=${start}&end=${end}`) : Promise.resolve({ tasks: [] }),
-    emp.checklist.total > 0  ? api(`/api/mis/detail?userId=${userId}&type=checklist&start=${start}&end=${end}`)  : Promise.resolve({ tasks: [] })
+    emp.checklist.total > 0  ? api(`/api/mis/detail?userId=${userId}&type=checklist&start=${start}&end=${end}`)  : Promise.resolve({ tasks: [] }),
+    fmsHasEntries ? api(`/api/mis/detail-fms?userId=${userId}&start=${start}&end=${end}`) : Promise.resolve({ tasks: [], total: 0, truncated: false })
   ]);
 
   const today = new Date().toISOString().split('T')[0];
@@ -5155,6 +5157,20 @@ async function openAllMISDetail(userId, userName) {
         <span>Total entries: <strong>${fms.total}</strong></span>
         <span style="color:var(--success)">Done: <strong>${fms.done}</strong></span>
         <span style="color:var(--destructive)">Pending: <strong>${fms.pending}</strong></span>
+      </div>
+      ${fmsDetail.truncated ? `<div style="font-size:11px;color:var(--muted-foreground);margin-top:6px">Showing latest ${fmsDetail.tasks.length} of ${fmsDetail.total} — narrow the date range to see all.</div>` : ''}
+      <div style="overflow-x:auto;margin-top:8px">
+        <table style="font-size:12px">
+          <thead><tr><th>FMS / Step</th><th>Planned Date</th><th>Status</th></tr></thead>
+          <tbody>${(fmsDetail.tasks || []).map(t => `
+            <tr>
+              <td>${escapeHtml(t.fmsName||'')}<div style="font-size:10px;color:var(--muted-foreground)">${escapeHtml(t.stepName||'')}</div></td>
+              <td style="color:var(--muted-foreground);white-space:nowrap">${t.planDate ? fmtDate(t.planDate) : escapeHtml(t.planValue||'—')}</td>
+              <td>${t.status==='done'
+                ? `<span class="status-badge completed">Done</span>`
+                : `<span class="status-badge pending">Pending</span>${t.planDate && t.planDate < today ? ' <span style="font-size:10px;color:var(--destructive);font-weight:600">⏰ Late</span>' : ''}`}</td>
+            </tr>`).join('') || `<tr><td colspan="3" class="empty" style="font-size:12px">No FMS entries</td></tr>`}</tbody>
+        </table>
       </div>
     </div>` : ''}`;
 

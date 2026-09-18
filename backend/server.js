@@ -1278,10 +1278,16 @@ async function fetchSheetRows(sheet) {
 // checklist jaise hi (WHERE due_date BETWEEN ? AND ?). Pehle FMS in dono se date
 // range ignore karke hamesha "sab time" ka total deta tha — MIS ka date range
 // change karne par delegation/checklist ke numbers badalte the par FMS ke nahi.
-async function computeFmsStats(hodDept = '', collectPending = false, dateFrom = '', dateTo = '') {
+// collectAll=true: MIS "All Tasks" drill-down ke liye — pending AUR done dono
+// row-level entries collect karta hai (collectPending sirf pending karta hai,
+// dashboard pop-up ke liye). Delegation/Checklist jaisi hi ek task-list dikhane
+// ke liye chahiye tha — pehle FMS ka sirf total/done/pending count dikhta tha,
+// individual entries kahin nahi (isliye "FMS ke task nahi dikh rahe" complaint).
+async function computeFmsStats(hodDept = '', collectPending = false, dateFrom = '', dateTo = '', collectAll = false) {
   const rangeMode = !!(dateFrom && dateTo);
   const result = { perFms: [], perUser: {}, errors: [] };
   if (collectPending) result.perUserPending = {}; // uid -> [ {fmsName, stepName, planValue, planDate, isLate} ]
+  if (collectAll) result.perUserAll = {}; // uid -> [ {..., status:'done'|'pending'} ] — pending + done dono
   const _today = _istParts().dateStr;
   const [sheets] = await db.query('SELECT * FROM fms_sheets ORDER BY fms_name ASC');
   if (!sheets.length) return result;
@@ -1335,13 +1341,14 @@ async function computeFmsStats(hodDept = '', collectPending = false, dateFrom = 
 
       let stepPending = 0, stepDone = 0;
       const stepPendingRows = []; // collectPending ke liye — pending row ka detail
+      const stepAllRows = [];     // collectAll ke liye — pending + done dono ka detail
       for (const row of rows) {
         const planVal = (row[planIdx] || '').trim();
         const actualVal = (row[actualIdx] || '').trim();
         if (!planVal) continue; // plan hi nahi bhara — kisi bhi mode me nahi ginta
 
         let planDate = '';
-        if (rangeMode || collectPending) ({ planDate } = _parsePlanCellDate(planVal));
+        if (rangeMode || collectPending || collectAll) ({ planDate } = _parsePlanCellDate(planVal));
         if (rangeMode && (!planDate || planDate < dateFrom || planDate > dateTo)) continue; // range ke bahar
 
         if (!actualVal) {
@@ -1352,8 +1359,10 @@ async function computeFmsStats(hodDept = '', collectPending = false, dateFrom = 
               planDate, isLate: !!(planDate && planDate < _today)
             });
           }
+          if (collectAll) stepAllRows.push({ fmsName, stepName: step.step_name, planValue: planVal, planDate, status: 'pending' });
         } else {
           stepDone++;
+          if (collectAll) stepAllRows.push({ fmsName, stepName: step.step_name, planValue: planVal, planDate, status: 'done' });
         }
       }
 
@@ -1370,6 +1379,10 @@ async function computeFmsStats(hodDept = '', collectPending = false, dateFrom = 
         if (collectPending && stepPendingRows.length) {
           if (!result.perUserPending[d.id]) result.perUserPending[d.id] = [];
           for (const pr of stepPendingRows) result.perUserPending[d.id].push(pr);
+        }
+        if (collectAll && stepAllRows.length) {
+          if (!result.perUserAll[d.id]) result.perUserAll[d.id] = [];
+          for (const ar of stepAllRows) result.perUserAll[d.id].push(ar);
         }
       }
 
@@ -2628,6 +2641,27 @@ app.get('/api/mis/detail', requireAuth, async (req, res) => {
     const table = type === 'delegation' ? 'delegation_tasks' : 'checklist_tasks';
     const [tasks] = await db.query(`SELECT t.id,t.description,t.status,t.doer_remark,TO_CHAR(t.due_date,'YYYY-MM-DD') AS due_date,TO_CHAR(t.completed_at,'YYYY-MM-DD') AS completed_at,TO_CHAR(t.completed_at,'YYYY-MM-DD HH12:MI AM') AS completed_at_ts,t.proof_image IS NOT NULL AS has_proof,t.proof_video_id IS NOT NULL AS has_video,u2.name AS assigned_by_name FROM ${table} t JOIN users u2 ON t.assigned_by=u2.id WHERE t.assigned_to=? AND t.due_date BETWEEN ? AND ? ORDER BY t.due_date ASC`, [userId, start, end]);
     res.json({ tasks });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
+});
+
+// ── FMS ke individual entries (pending + done), MIS "All Tasks" drill-down
+// ke liye. Delegation/Checklist ka list DB se seedha nikalta hai
+// (/api/mis/detail upar), FMS ka Google Sheets se — isliye alag endpoint.
+// Bahut bada date range (jaise poora saal) hazaaron entries de sakta hai,
+// isliye 300 tak cap karte hain (sabse recent) — 'truncated' bata deta hai
+// ki poori list nahi hai. ──
+app.get('/api/mis/detail-fms', requireAuth, async (req, res) => {
+  try {
+    let { userId, start, end } = req.query;
+    if (!userId || !start || !end) return res.status(400).json({ error: 'Missing params' });
+    if (req.session.role === 'user') userId = req.session.userId;
+    // hodDept='' — /api/mis/all jaisa hi (ROLE-INDEPENDENT), taaki numbers hamesha match karein
+    const fmsStats = await computeFmsStats('', false, start, end, true);
+    const rows = (fmsStats.perUserAll && fmsStats.perUserAll[userId]) || [];
+    rows.sort((a, b) => (b.planDate || '').localeCompare(a.planDate || '')); // naya pehle
+    const LIMIT = 300;
+    const truncated = rows.length > LIMIT;
+    res.json({ tasks: truncated ? rows.slice(0, LIMIT) : rows, total: rows.length, truncated });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
 });
 
