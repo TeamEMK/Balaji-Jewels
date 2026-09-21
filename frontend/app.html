@@ -77,6 +77,10 @@
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a4 4 0 00-4-4H7a4 4 0 00-4 4v10a4 4 0 004 4h4M17 21l4-4m0 0l-4-4m4 4H9"/></svg>
       <span class="nav-label-text">Payroll</span>
     </div>
+    <div class="nav-item" id="nav-payments" style="display:none" onclick="navigate('payments',this)">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 14l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <span class="nav-label-text">Payments</span>
+    </div>
     <div class="nav-item" id="nav-query" onclick="navigate('query',this)" style="position:relative">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
       <span class="nav-label-text">Query</span>
@@ -806,6 +810,51 @@
     </div>
     <div id="payrollResults">
       <div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Select a month and click <strong>Generate</strong></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       PAYMENT COLLECTION & CLIENT LEDGER — gold/diamond alag-alag track.
+       Admin-only. Data flow: Billing -> Dispatch -> FMS.
+  ══════════════════════════════════════ -->
+  <div id="page-payments" class="page">
+    <div class="page-header">
+      <div class="tab-group" id="pmtTypeTabGroup">
+        <div class="tab active" id="pmtTabOverview" onclick="pmtSwitchTab('overview')">📊 Overview</div>
+        <div class="tab" id="pmtTabLedger" onclick="pmtSwitchTab('ledger')">📒 Client Ledger</div>
+        <div class="tab" id="pmtTabAging" onclick="pmtSwitchTab('aging')">⏳ Aging Summary</div>
+        <div class="tab" id="pmtTabCustomers" onclick="pmtSwitchTab('customers')">👥 Customer Summary</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-outline btn-sm" onclick="openClientTermsModal()">⚙️ Client Terms</button>
+        <button class="btn btn-outline btn-sm" onclick="openAddBillModal()">+ Add Bill</button>
+        <button class="btn btn-outline btn-sm" id="pmtSyncFmsBtn" onclick="pmtSyncFromFms()">🔄 Sync from FMS</button>
+      </div>
+    </div>
+
+    <!-- Shared date-range filter (Overview + Aging use it) -->
+    <div id="pmtDateFilterWrap" style="background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px;margin-bottom:16px;display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:11px;font-weight:600;color:var(--muted-foreground);margin-bottom:4px;text-transform:uppercase">Start Date</div>
+        <input type="date" id="pmtStart" style="padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;"/>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:600;color:var(--muted-foreground);margin-bottom:4px;text-transform:uppercase">End Date</div>
+        <input type="date" id="pmtEnd" style="padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;"/>
+      </div>
+      <!-- Ledger tab ka apna client filter -->
+      <div id="pmtClientFilterWrap" style="display:none">
+        <div style="font-size:11px;font-weight:600;color:var(--muted-foreground);margin-bottom:4px;text-transform:uppercase">Client</div>
+        <select id="pmtClientFilter" onchange="pmtLoadLedger()"
+          style="padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;min-width:200px;background:var(--card);color:var(--foreground);cursor:pointer;">
+          <option value="">All Clients</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" onclick="pmtGenerate()">Generate</button>
+    </div>
+
+    <div id="pmtResults">
+      <div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Select a date range and click <strong>Generate</strong></div>
     </div>
   </div>
 
@@ -2244,6 +2293,93 @@
     </div>
     <div style="flex:1;overflow:auto" id="dbmContent">
       <div class="empty">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     CLIENT PAYMENT TERMS MODAL
+══════════════════════════════════════ -->
+<div class="modal-overlay" id="clientTermsModal">
+  <div class="modal" style="max-width:560px">
+    <h3>⚙️ Client Payment Terms</h3>
+    <div class="alert error" id="clientTermsErr"></div>
+    <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:14px">How many days after a bill is a client's gold / diamond payment due? (e.g. gold 10-15 days, diamond 45-60 days — enter the max)</div>
+    <div id="clientTermsBody" style="max-height:50vh;overflow:auto">Loading…</div>
+    <div class="modal-footer" style="justify-content:flex-end">
+      <button class="btn btn-outline" onclick="closeModal('clientTermsModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     ADD BILL MODAL
+══════════════════════════════════════ -->
+<div class="modal-overlay" id="addBillModal">
+  <div class="modal" style="max-width:460px">
+    <h3>+ Add Bill</h3>
+    <div class="alert error" id="addBillErr"></div>
+    <div class="form-group">
+      <label>Client</label>
+      <select id="abClient"><option value="">Select client</option></select>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Bill No <span style="color:var(--muted-foreground);font-weight:400">(optional)</span></label>
+        <input type="text" id="abBillNo" placeholder="e.g. INV-1042"/>
+      </div>
+      <div class="form-group">
+        <label>Bill Date</label>
+        <input type="date" id="abBillDate"/>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Gold Amount (₹)</label>
+        <input type="number" id="abGold" min="0" step="0.01" placeholder="0"/>
+      </div>
+      <div class="form-group">
+        <label>Diamond Amount (₹)</label>
+        <input type="number" id="abDiamond" min="0" step="0.01" placeholder="0"/>
+      </div>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn btn-outline" onclick="closeModal('addBillModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveAddBill()">Save Bill</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     RECORD PAYMENT MODAL
+══════════════════════════════════════ -->
+<div class="modal-overlay" id="recordPaymentModal">
+  <div class="modal" style="max-width:440px">
+    <h3>💰 Record Payment</h3>
+    <div class="alert error" id="recordPaymentErr"></div>
+    <input type="hidden" id="rpBillId"/>
+    <div id="rpBillMeta" style="font-size:12px;color:var(--muted-foreground);margin-bottom:12px"></div>
+    <div class="form-group">
+      <label>Payment Date</label>
+      <input type="date" id="rpDate"/>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Gold Received (₹)</label>
+        <input type="number" id="rpGold" min="0" step="0.01" placeholder="0"/>
+      </div>
+      <div class="form-group">
+        <label>Diamond Received (₹)</label>
+        <input type="number" id="rpDiamond" min="0" step="0.01" placeholder="0"/>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Note <span style="color:var(--muted-foreground);font-weight:400">(optional)</span></label>
+      <textarea id="rpNote" style="min-height:50px" placeholder="e.g. NEFT ref, cheque no…"></textarea>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn btn-outline" onclick="closeModal('recordPaymentModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveRecordPayment()">Save Payment</button>
     </div>
   </div>
 </div>

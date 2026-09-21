@@ -280,6 +280,7 @@ async function init() {
       document.getElementById('nav-360').style.display = 'flex';
       document.getElementById('nav-fms').style.display = 'flex';
       document.getElementById('nav-payroll').style.display = 'flex';
+      document.getElementById('nav-payments').style.display = 'flex';
       document.getElementById('bulkDeleteBtn').style.display = 'inline-flex';
       document.getElementById('bulkEditBtn').style.display = 'inline-flex';
       document.getElementById('misCombinedBtn').style.display = 'inline-flex';
@@ -427,7 +428,7 @@ function setMinDates() {
 // ══════════════════════════════════════════════════════
 // NAVIGATION
 // ══════════════════════════════════════════════════════
-const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',query:'Query',users:'Users',profile:'Profile',mis:'MIS Report',score360:'360° Score',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client'};
+const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',payments:'Payments',query:'Query',users:'Users',profile:'Profile',mis:'MIS Report',score360:'360° Score',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client'};
 
 // Sidebar par cursor jaate hi (jab wo expand hone lagta hai) koi bhi khula dropdown
 // band kar do — warna native select popup sidebar ke upar overlap dikhta hai.
@@ -514,6 +515,7 @@ function navigate(page, el) {
   if (page==='score360') initScore360Page();
   if (page==='leaves') loadLeaves();
   if (page==='payroll') initPayrollPage();
+  if (page==='payments') initPaymentsPage();
   if (page==='query') loadQueries();
   if (page==='records') loadRecords();
   // navigate() core app ka hissa hai, yaani client ki copy me bhi jaata hai —
@@ -1120,6 +1122,285 @@ function exportPayrollCSV() {
       .map(v => `"${String(v).replace(/"/g,'""')}"`).join(','));
   });
   downloadFile(lines.join('\n'), `payroll_${_payrollLastData.month}.csv`);
+}
+
+// ══════════════════════════════════════════════════════
+// PAYMENT COLLECTION & CLIENT LEDGER — gold/diamond payment alag-alag
+// track hota hai. 4 tabs: Overview (a), Client Ledger (b), Aging Summary
+// (c), Customer Summary (d). 'client' role users hi clients hain (Catalog
+// login wale) — koi alag Clients list nahi.
+// ══════════════════════════════════════════════════════
+let _pmtTab = 'overview';
+let _pmtClients = []; // {id,name,email,gold_days,diamond_days}
+const pmtMoney = v => `₹${(Number(v) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+async function initPaymentsPage() {
+  const end = document.getElementById('pmtStart');
+  if (end && !end.value) {
+    const now = new Date();
+    document.getElementById('pmtStart').value = new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString().slice(0, 10);
+    document.getElementById('pmtEnd').value = now.toISOString().slice(0, 10);
+  }
+  await pmtLoadClientsList();
+  pmtGenerate();
+}
+
+async function pmtLoadClientsList() {
+  const rows = await api('/api/payments/clients');
+  if (!Array.isArray(rows)) return;
+  _pmtClients = rows;
+  const sel = document.getElementById('pmtClientFilter');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All Clients</option>' + rows.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  sel.value = cur;
+}
+
+function pmtSwitchTab(tab) {
+  _pmtTab = tab;
+  ['Overview', 'Ledger', 'Aging', 'Customers'].forEach(t => {
+    document.getElementById('pmtTab' + t).classList.toggle('active', t.toLowerCase() === tab);
+  });
+  document.getElementById('pmtClientFilterWrap').style.display = tab === 'ledger' ? '' : 'none';
+  pmtGenerate();
+}
+
+function pmtGenerate() {
+  if (_pmtTab === 'overview') return pmtLoadOverview();
+  if (_pmtTab === 'ledger') return pmtLoadLedger();
+  if (_pmtTab === 'aging') return pmtLoadAging();
+  if (_pmtTab === 'customers') return pmtLoadCustomers();
+}
+
+function pmtDateQS() {
+  const start = document.getElementById('pmtStart').value, end = document.getElementById('pmtEnd').value;
+  return start && end ? `?start=${start}&end=${end}` : '';
+}
+
+async function pmtLoadOverview() {
+  const box = document.getElementById('pmtResults');
+  box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Loading…</div>`;
+  const data = await api('/api/payments/overview' + pmtDateQS());
+  if (data.error) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${escapeHtml(data.error)}</div>`; return; }
+  const goldPending = data.goldTotal - data.goldPaidTotal, diamondPending = data.diamondTotal - data.diamondPaidTotal;
+  const card = (label, value, color) => `<div style="background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px">
+    <div style="font-size:11px;font-weight:600;color:var(--muted-foreground);text-transform:uppercase;margin-bottom:6px">${label}</div>
+    <div style="font-size:20px;font-weight:700;${color ? `color:${color}` : ''}">${value}</div>
+  </div>`;
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px">
+      ${card('Total Bills', data.billCount)}
+      ${card('Gold Billed', pmtMoney(data.goldTotal))}
+      ${card('Gold Pending', pmtMoney(goldPending), 'var(--warning)')}
+      ${card('Diamond Billed', pmtMoney(data.diamondTotal))}
+      ${card('Diamond Pending', pmtMoney(diamondPending), 'var(--warning)')}
+    </div>
+    <div style="background:var(--card);border-radius:12px;border:1px solid var(--border);overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="text-align:left">
+          <th style="padding:10px 12px;background:var(--muted)">Client</th>
+          <th style="padding:10px 12px;background:var(--muted);text-align:center">Gold Terms (days)</th>
+          <th style="padding:10px 12px;background:var(--muted);text-align:center">Diamond Terms (days)</th>
+          <th style="padding:10px 12px;background:var(--muted);text-align:center">Ledger</th>
+        </tr></thead>
+        <tbody>${data.clients.map(c => `<tr>
+          <td style="padding:10px 12px;font-weight:600">${escapeHtml(c.name)}</td>
+          <td style="padding:10px 12px;text-align:center">${c.gold_days ?? '—'}</td>
+          <td style="padding:10px 12px;text-align:center">${c.diamond_days ?? '—'}</td>
+          <td style="padding:10px 12px;text-align:center"><button class="btn btn-outline btn-sm" onclick="pmtDrillCustomer(${c.id})">View →</button></td>
+        </tr>`).join('') || '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--muted-foreground)">No clients yet</td></tr>'}</tbody>
+      </table>
+    </div>`;
+}
+
+async function pmtLoadLedger() {
+  const box = document.getElementById('pmtResults');
+  box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Loading…</div>`;
+  const clientId = document.getElementById('pmtClientFilter').value;
+  const start = document.getElementById('pmtStart').value, end = document.getElementById('pmtEnd').value;
+  let qs = [];
+  if (clientId) qs.push(`clientId=${clientId}`);
+  if (start && end) qs.push(`start=${start}&end=${end}`);
+  const rows = await api('/api/payments/bills' + (qs.length ? '?' + qs.join('&') : ''));
+  if (rows.error) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${escapeHtml(rows.error)}</div>`; return; }
+  if (!rows.length) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">No bills found</div>`; return; }
+  const due = rows.filter(r => (r.goldIsDue || r.diamondIsDue));
+  const notDue = rows.filter(r => !(r.goldIsDue || r.diamondIsDue) && (r.goldPending > 0 || r.diamondPending > 0));
+  const paid = rows.filter(r => r.goldPending <= 0 && r.diamondPending <= 0);
+  const pmtRow = r => `<tr>
+    <td style="padding:10px 12px;font-weight:600">${escapeHtml(r.clientName)}<div style="font-size:11px;color:var(--muted-foreground);font-weight:400">${escapeHtml(r.billNo || '—')} · ${fmtDate(r.billDate)} · ${r.source==='fms'?'FMS':'Manual'}</div></td>
+    <td style="padding:10px 12px;text-align:right">${pmtMoney(r.goldAmount)}<div style="font-size:11px;color:${r.goldIsDue?'var(--destructive)':'var(--muted-foreground)'}">${r.goldPending>0 ? `${pmtMoney(r.goldPending)} pending${r.hasTerms?` · due ${fmtDate(r.goldDueDate)}${r.goldIsDue?` (${r.goldOverdueDays}d late)`:''}`:' · no terms set'}` : '✅ paid'}</div></td>
+    <td style="padding:10px 12px;text-align:right">${pmtMoney(r.diamondAmount)}<div style="font-size:11px;color:${r.diamondIsDue?'var(--destructive)':'var(--muted-foreground)'}">${r.diamondPending>0 ? `${pmtMoney(r.diamondPending)} pending${r.hasTerms?` · due ${fmtDate(r.diamondDueDate)}${r.diamondIsDue?` (${r.diamondOverdueDays}d late)`:''}`:' · no terms set'}` : '✅ paid'}</div></td>
+    <td style="padding:10px 12px;text-align:center">${(r.goldPending>0||r.diamondPending>0) ? `<button class="btn btn-primary btn-sm" onclick='openRecordPayment(${JSON.stringify({id:r.id,name:r.clientName,billNo:r.billNo,goldPending:r.goldPending,diamondPending:r.diamondPending})})'>💰 Pay</button>` : ''}</td>
+  </tr>`;
+  const table = (title, list, emptyMsg, color) => !list.length ? '' : `
+    <div style="font-size:13px;font-weight:700;margin:16px 0 8px;color:${color || 'var(--foreground)'}">${title} (${list.length})</div>
+    <div style="background:var(--card);border-radius:12px;border:1px solid var(--border);overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="text-align:left">
+          <th style="padding:10px 12px;background:var(--muted)">Client / Bill</th>
+          <th style="padding:10px 12px;background:var(--muted);text-align:right">Gold</th>
+          <th style="padding:10px 12px;background:var(--muted);text-align:right">Diamond</th>
+          <th style="padding:10px 12px;background:var(--muted);text-align:center">Action</th>
+        </tr></thead>
+        <tbody>${list.map(pmtRow).join('')}</tbody>
+      </table>
+    </div>`;
+  box.innerHTML =
+    table('🔴 Due / Overdue', due, '', 'var(--destructive)') +
+    table('🟡 Not Yet Due', notDue, '', 'var(--warning)') +
+    table('✅ Fully Paid', paid, '', 'var(--success)');
+}
+
+async function pmtLoadAging() {
+  const box = document.getElementById('pmtResults');
+  box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Loading…</div>`;
+  const data = await api('/api/payments/aging' + pmtDateQS());
+  if (data.error) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${escapeHtml(data.error)}</div>`; return; }
+  const bucketTable = (title, obj, color) => {
+    const max = Math.max(1, ...data.buckets.map(b => obj[b]));
+    return `<div style="background:var(--card);border-radius:12px;border:1px solid var(--border);padding:16px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:${color}">${title}</div>
+      ${data.buckets.map(b => `<div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px"><span>${b} days</span><span style="font-weight:600">${pmtMoney(obj[b])}</span></div>
+        <div style="background:var(--muted);border-radius:6px;height:8px;overflow:hidden"><div style="width:${Math.round(obj[b]/max*100)}%;height:100%;background:${color}"></div></div>
+      </div>`).join('')}
+    </div>`;
+  };
+  box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">
+    ${bucketTable('🥇 Gold — Overdue Aging', data.gold, '#c9a227')}
+    ${bucketTable('💎 Diamond — Overdue Aging', data.diamond, '#4a90d9')}
+  </div>`;
+}
+
+async function pmtLoadCustomers() {
+  const box = document.getElementById('pmtResults');
+  box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Loading…</div>`;
+  const rows = await api('/api/payments/customers');
+  if (rows.error) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${escapeHtml(rows.error)}</div>`; return; }
+  if (!rows.length) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">No clients yet</div>`; return; }
+  box.innerHTML = `<div style="background:var(--card);border-radius:12px;border:1px solid var(--border);overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="text-align:left">
+        <th style="padding:10px 12px;background:var(--muted)">Client</th>
+        <th style="padding:10px 12px;background:var(--muted);text-align:center">Bills</th>
+        <th style="padding:10px 12px;background:var(--muted);text-align:right">Gold Due</th>
+        <th style="padding:10px 12px;background:var(--muted);text-align:right">Diamond Due</th>
+        <th style="padding:10px 12px;background:var(--muted);text-align:right">Total Due</th>
+        <th style="padding:10px 12px;background:var(--muted);text-align:right">Balance Paid</th>
+      </tr></thead>
+      <tbody>${rows.map(r => `<tr style="cursor:pointer" onclick="pmtDrillCustomer(${r.clientId})">
+        <td style="padding:10px 12px;font-weight:600">${escapeHtml(r.name)}</td>
+        <td style="padding:10px 12px;text-align:center">${r.billCount}</td>
+        <td style="padding:10px 12px;text-align:right;${r.goldOverdue>0?'color:var(--destructive)':''}">${pmtMoney(r.goldPending)}</td>
+        <td style="padding:10px 12px;text-align:right;${r.diamondOverdue>0?'color:var(--destructive)':''}">${pmtMoney(r.diamondPending)}</td>
+        <td style="padding:10px 12px;text-align:right;font-weight:700">${pmtMoney(r.totalDue)}</td>
+        <td style="padding:10px 12px;text-align:right;color:var(--success)">${pmtMoney(r.totalBalance)}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+  </div>`;
+}
+
+function pmtDrillCustomer(clientId) {
+  pmtSwitchTab('ledger');
+  document.getElementById('pmtClientFilter').value = clientId;
+  pmtLoadLedger();
+}
+
+async function pmtSyncFromFms() {
+  const btn = document.getElementById('pmtSyncFmsBtn');
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = '⏳ Syncing…';
+  try {
+    const r = await api('/api/payments/bills/sync-fms', 'POST');
+    if (r.error) { showToast(r.error, 'error'); return; }
+    showToast(`✅ ${r.imported} bill(s) imported from FMS${r.skippedSheets.length ? ` (${r.skippedSheets.length} sheet(s) have no billing columns)` : ''}${r.skippedNoClient ? ` · ${r.skippedNoClient} row(s) skipped — client not found` : ''}`);
+    pmtGenerate();
+  } finally { btn.disabled = false; btn.textContent = '🔄 Sync from FMS'; }
+}
+
+// ── Client Payment Terms modal ──
+async function openClientTermsModal() {
+  document.getElementById('clientTermsErr').style.display = 'none';
+  const body = document.getElementById('clientTermsBody');
+  body.innerHTML = 'Loading…';
+  document.getElementById('clientTermsModal').classList.add('open');
+  const rows = await api('/api/payments/clients');
+  if (!Array.isArray(rows)) { body.innerHTML = `<div style="color:var(--destructive)">${escapeHtml(rows.error || 'Failed to load')}</div>`; return; }
+  _pmtClients = rows;
+  if (!rows.length) { body.innerHTML = '<div style="color:var(--muted-foreground)">No client-role users yet. Add one under Users first.</div>'; return; }
+  body.innerHTML = rows.map(c => `
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="flex:1;font-weight:600;font-size:13px">${escapeHtml(c.name)}</div>
+      <input type="number" min="0" id="ctGold${c.id}" value="${c.gold_days ?? ''}" placeholder="Gold days" style="width:90px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px"/>
+      <input type="number" min="0" id="ctDiamond${c.id}" value="${c.diamond_days ?? ''}" placeholder="Diamond days" style="width:100px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px"/>
+      <button class="btn btn-primary btn-sm" onclick="saveClientTerms(${c.id})">Save</button>
+    </div>`).join('');
+}
+
+async function saveClientTerms(userId) {
+  const goldDays = document.getElementById('ctGold' + userId).value;
+  const diamondDays = document.getElementById('ctDiamond' + userId).value;
+  const r = await api(`/api/payments/clients/${userId}/terms`, 'PUT', { goldDays, diamondDays });
+  if (r.error) { showToast(r.error, 'error'); return; }
+  showToast('✅ Terms saved!');
+  pmtLoadClientsList();
+}
+
+// ── Add Bill modal ──
+async function openAddBillModal() {
+  document.getElementById('addBillErr').style.display = 'none';
+  document.getElementById('abBillNo').value = '';
+  document.getElementById('abBillDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('abGold').value = '';
+  document.getElementById('abDiamond').value = '';
+  const sel = document.getElementById('abClient');
+  if (!_pmtClients.length) await pmtLoadClientsList();
+  sel.innerHTML = '<option value="">Select client</option>' + _pmtClients.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  document.getElementById('addBillModal').classList.add('open');
+}
+
+async function saveAddBill() {
+  const clientUserId = document.getElementById('abClient').value;
+  const billNo = document.getElementById('abBillNo').value;
+  const billDate = document.getElementById('abBillDate').value;
+  const goldAmount = document.getElementById('abGold').value;
+  const diamondAmount = document.getElementById('abDiamond').value;
+  const errEl = document.getElementById('addBillErr');
+  errEl.style.display = 'none';
+  if (!clientUserId || !billDate) { errEl.textContent = 'Client and bill date required'; errEl.style.display = ''; return; }
+  const r = await api('/api/payments/bills', 'POST', { clientUserId, billNo, billDate, goldAmount, diamondAmount });
+  if (r.error) { errEl.textContent = r.error; errEl.style.display = ''; return; }
+  closeModal('addBillModal');
+  showToast('✅ Bill added!');
+  pmtGenerate();
+}
+
+// ── Record Payment modal ──
+function openRecordPayment(bill) {
+  document.getElementById('recordPaymentErr').style.display = 'none';
+  document.getElementById('rpBillId').value = bill.id;
+  document.getElementById('rpBillMeta').innerHTML = `<strong>${escapeHtml(bill.name)}</strong> — ${escapeHtml(bill.billNo || 'No bill no')}<br>Gold pending: ${pmtMoney(bill.goldPending)} · Diamond pending: ${pmtMoney(bill.diamondPending)}`;
+  document.getElementById('rpDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('rpGold').value = '';
+  document.getElementById('rpDiamond').value = '';
+  document.getElementById('rpNote').value = '';
+  document.getElementById('recordPaymentModal').classList.add('open');
+}
+
+async function saveRecordPayment() {
+  const billId = document.getElementById('rpBillId').value;
+  const paymentDate = document.getElementById('rpDate').value;
+  const goldAmount = document.getElementById('rpGold').value;
+  const diamondAmount = document.getElementById('rpDiamond').value;
+  const note = document.getElementById('rpNote').value;
+  const errEl = document.getElementById('recordPaymentErr');
+  errEl.style.display = 'none';
+  if (!paymentDate) { errEl.textContent = 'Payment date required'; errEl.style.display = ''; return; }
+  const r = await api(`/api/payments/bills/${billId}/payment`, 'POST', { paymentDate, goldAmount, diamondAmount, note });
+  if (r.error) { errEl.textContent = r.error; errEl.style.display = ''; return; }
+  closeModal('recordPaymentModal');
+  showToast('✅ Payment recorded!');
+  pmtGenerate();
 }
 
 // ══════════════════════════════════════════════════════
