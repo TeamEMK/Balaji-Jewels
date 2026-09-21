@@ -90,6 +90,10 @@
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
       <span class="nav-label-text">MIS Report</span>
     </div>
+    <div class="nav-item" id="nav-360" style="display:none" onclick="navigate('score360',this)">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      <span class="nav-label-text">360° Score</span>
+    </div>
     <div class="nav-item" id="nav-records" style="display:none" onclick="navigate('records',this)">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
       <span class="nav-label-text">Records</span>
@@ -613,6 +617,58 @@
 
     <!-- Results -->
     <div id="misResults">
+      <div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">
+        Select date range and click Generate
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       360° SCORE — Daily Task fill-rate + Delegation + Checklist + FMS,
+       chaaron ko milaake ek combined score (100 me se), employee-wise.
+  ══════════════════════════════════════ -->
+  <div id="page-score360" class="page">
+    <!-- Filters -->
+    <div style="background:var(--card);border-radius:12px;border:1px solid var(--border);padding:18px;margin-bottom:18px;">
+      <div style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--muted-foreground);margin-bottom:4px;text-transform:uppercase">Start Date</div>
+          <input type="date" id="s360Start" style="padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;"/>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--muted-foreground);margin-bottom:4px;text-transform:uppercase">End Date</div>
+          <input type="date" id="s360End" style="padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;"/>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--muted-foreground);margin-bottom:4px;text-transform:uppercase">Department</div>
+          <select id="s360Dept" onchange="renderScore360()"
+            style="padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;min-width:160px;background:var(--card);color:var(--foreground);cursor:pointer;">
+            <option value="">All Departments</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:600;color:var(--muted-foreground);margin-bottom:4px;text-transform:uppercase">Sort By</div>
+          <select id="s360Sort" onchange="renderScore360()"
+            style="padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;min-width:150px;background:var(--card);color:var(--foreground);cursor:pointer;">
+            <option value="score_desc">Score: High → Low</option>
+            <option value="score_asc">Score: Low → High</option>
+            <option value="name">Name (A-Z)</option>
+          </select>
+        </div>
+        <div style="flex:1;min-width:180px">
+          <div style="font-size:11px;font-weight:600;color:var(--muted-foreground);margin-bottom:4px;text-transform:uppercase">Search</div>
+          <input type="text" id="s360Search" placeholder="🔍 Search employee…" oninput="renderScore360()"
+            style="width:100%;padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;"/>
+        </div>
+        <button class="btn btn-primary" onclick="generateScore360()">Generate</button>
+        <button class="btn btn-outline" id="s360ExportBtn" style="display:none" onclick="exportScore360()">⬇ Export CSV</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted-foreground);margin-top:12px">
+        <strong>360° Score</strong> = average of 4 dimensions (each 0-100, missing ones excluded from the average): Daily Task fill-rate, Delegation score, Checklist score, FMS completion.
+      </div>
+    </div>
+
+    <div id="s360Results">
       <div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">
         Select date range and click Generate
       </div>

@@ -5,6 +5,7 @@
 // ══════════════════════════════════════════════════════
 
 const { getSheetsClient, extractSpreadsheetId } = require('../lib/google');
+const { workingDaysInRange } = require('../lib/workdays');
 
 module.exports = function registerDailyTaskRoutes(app, ctx) {
   const { db, requireAuth, requireAdmin } = ctx;
@@ -152,6 +153,39 @@ module.exports = function registerDailyTaskRoutes(app, ctx) {
          WHERE dtl.entry_date BETWEEN ? AND ? AND dtl.log_type=? ${deptFilter}
          GROUP BY u.id, u.name, u.department ORDER BY u.name ASC`, params);
       res.json(rows.map(r => ({ userId: r.userId, name: r.name, department: r.department || '', count: parseInt(r.cnt) || 0, totalMinutes: parseInt(r.total_minutes) || 0 })));
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
+  });
+
+  // ── Fill rate — Employee 360 Score ke liye. Date range me har employee ke
+  // "working days" (apna week_off/extra_off respect karte hue) vs "kitne din
+  // Daily Task bhara" — fillRate% isi se nikalta hai. ──
+  app.get('/api/daily-task/fill-rate', requireAuth, async (req, res) => {
+    try {
+      const role = req.session.role;
+      if (!['admin', 'hod', 'pc'].includes(role)) return res.status(403).json({ error: 'Not allowed' });
+      const { start, end } = req.query;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start || '') || !/^\d{4}-\d{2}-\d{2}$/.test(end || '')) return res.status(400).json({ error: 'Dates required' });
+
+      let deptFilter = '', params = [];
+      if (role === 'hod') {
+        const [me] = await db.query('SELECT department FROM users WHERE id=?', [req.session.userId]);
+        deptFilter = 'AND department=?'; params.push(me[0]?.department || '');
+      }
+      const [users] = await db.query(`SELECT id,name,department,week_off,extra_off FROM users WHERE role<>'client' ${deptFilter}`, params);
+
+      const [logRows] = await db.query(
+        `SELECT user_id, COUNT(DISTINCT entry_date) AS days_filled FROM daily_task_logs
+         WHERE entry_date BETWEEN ? AND ? AND log_type='daily' GROUP BY user_id`, [start, end]);
+      const filledByUser = {};
+      logRows.forEach(r => { filledByUser[r.user_id] = parseInt(r.days_filled) || 0; });
+
+      const rows = users.map(u => {
+        const workingDays = workingDaysInRange(start, end, u.week_off || '', u.extra_off || '');
+        const daysFilled = Math.min(filledByUser[u.id] || 0, workingDays || Infinity);
+        const fillRate = workingDays > 0 ? Math.round((daysFilled / workingDays) * 1000) / 10 : null;
+        return { userId: u.id, name: u.name, department: u.department || '', workingDays, daysFilled, fillRate };
+      });
+      res.json(rows);
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
   });
 

@@ -277,6 +277,7 @@ async function init() {
     if (ME.role === 'admin') {
       document.getElementById('nav-users').style.display = 'flex';
       document.getElementById('nav-mis').style.display = 'flex';
+      document.getElementById('nav-360').style.display = 'flex';
       document.getElementById('nav-fms').style.display = 'flex';
       document.getElementById('nav-payroll').style.display = 'flex';
       document.getElementById('bulkDeleteBtn').style.display = 'inline-flex';
@@ -286,11 +287,13 @@ async function init() {
     if (ME.role === 'hod') {
       // HOD ko MIS dikhta hai (apne department ka)
       document.getElementById('nav-mis').style.display = 'flex';
+      document.getElementById('nav-360').style.display = 'flex';
       document.getElementById('setPlanBtn').style.display = 'inline-flex';
     }
     if (ME.role === 'pc') {
       // PC: can view all tasks + approve, but cannot edit/delete
       // Nav items same as employee (dashboard, alltasks, approvals, profile, fms-tasks)
+      document.getElementById('nav-360').style.display = 'flex';
     }
     if (ME.role === 'user') {
       // Regular user ko MIS dikhta hai — sirf apni (self-only, backend filter karta hai)
@@ -424,7 +427,7 @@ function setMinDates() {
 // ══════════════════════════════════════════════════════
 // NAVIGATION
 // ══════════════════════════════════════════════════════
-const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',query:'Query',users:'Users',profile:'Profile',mis:'MIS Report',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client'};
+const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',query:'Query',users:'Users',profile:'Profile',mis:'MIS Report',score360:'360° Score',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client'};
 
 // Sidebar par cursor jaate hi (jab wo expand hone lagta hai) koi bhi khula dropdown
 // band kar do — warna native select popup sidebar ke upar overlap dikhta hai.
@@ -508,6 +511,7 @@ function navigate(page, el) {
   if (page==='fms') loadFMSAdmin();
   if (page==='fms-tasks') loadFMSTasks();
   if (page==='mis') initMISDeptFilter();
+  if (page==='score360') initScore360Page();
   if (page==='leaves') loadLeaves();
   if (page==='payroll') initPayrollPage();
   if (page==='query') loadQueries();
@@ -5186,6 +5190,178 @@ function setDefaultMISDates() {
   weekAgo.setDate(today.getDate() - 6);
   document.getElementById('misStart').value = weekAgo.toISOString().split('T')[0];
   document.getElementById('misEnd').value = today.toISOString().split('T')[0];
+}
+
+// ══════════════════════════════════════════════════════
+// 360° SCORE — Daily Task fill-rate + Delegation + Checklist + FMS, chaaron
+// ko milaake ek combined score (0-100), employee-wise, filters ke saath.
+//
+// Delegation/Checklist ka MIS score (calcMisScore) ek PENALTY scale hai —
+// 0 = perfect, negative = problems (-100 tak). Isko 0-100 "goodness" me badalna
+// padta hai: goodness = 100 + score (0 se 100 ban jaata hai). FMS ka score
+// pehle se hi 0-100 completion % hai (done/total), seedha use hota hai. Daily
+// Task fill-rate bhi 0-100 hai. Jis employee ka kisi dimension me data hi
+// nahi (total=0), us dimension ko average se bahar rakha jaata hai — na ki 0
+// maan liya jaata (unfair na ho — jaise kisi ko us hafte koi delegation task
+// mila hi nahi to uski galti nahi).
+// ══════════════════════════════════════════════════════
+let _score360Data = [];
+
+function setDefaultScore360Dates() {
+  const today = new Date();
+  const weekAgo = new Date(today);
+  weekAgo.setDate(today.getDate() - 6);
+  document.getElementById('s360Start').value = weekAgo.toISOString().split('T')[0];
+  document.getElementById('s360End').value = today.toISOString().split('T')[0];
+}
+
+async function initScore360Page() {
+  if (!document.getElementById('s360Start').value) setDefaultScore360Dates();
+  try {
+    const depts = await api('/api/departments');
+    if (Array.isArray(depts)) {
+      const sel = document.getElementById('s360Dept');
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">All Departments</option>' + depts.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
+      if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+    }
+  } catch (e) {}
+}
+
+// 0-100 "goodness" style — 360 score aur har dimension bar dono isi se rangte hain.
+function score360Style(score) {
+  if (score === null || score === undefined) return { color: 'var(--muted-foreground)', label: '—' };
+  if (score >= 85) return { color: 'var(--success)', label: 'Excellent' };
+  if (score >= 65) return { color: 'var(--primary)', label: 'Good' };
+  if (score >= 45) return { color: 'var(--warning)', label: 'Needs Improvement' };
+  return { color: 'var(--destructive)', label: 'Poor' };
+}
+
+async function generateScore360() {
+  const start = document.getElementById('s360Start').value;
+  const end = document.getElementById('s360End').value;
+  if (!start || !end) { showToast('Select a date range', 'error'); return; }
+  const box = document.getElementById('s360Results');
+  box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border)">Loading…</div>`;
+  document.getElementById('s360ExportBtn').style.display = 'none';
+
+  const [misRows, fillRows] = await Promise.all([
+    api(`/api/mis/all?start=${start}&end=${end}`),
+    api(`/api/daily-task/fill-rate?start=${start}&end=${end}`)
+  ]);
+  // /api/mis/all teen shape me se koi ek deta hai: plain array (sab theek),
+  // {rows, fmsErrors} (kuch FMS sheets padhne me dikkat aayi par baaki data
+  // theek hai), ya {error} (poora request hi fail). Teeno ko alag-alag pehchano.
+  let misList, misFmsErrors = [];
+  if (Array.isArray(misRows)) {
+    misList = misRows;
+  } else if (misRows && Array.isArray(misRows.rows)) {
+    misList = misRows.rows;
+    misFmsErrors = misRows.fmsErrors || [];
+  } else {
+    box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${(misRows && misRows.error) || 'Failed to load MIS data'}</div>`;
+    return;
+  }
+  if (fillRows.error) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${fillRows.error}</div>`; return; }
+  if (misFmsErrors.length) showToast(`⚠️ FMS data unavailable for: ${misFmsErrors.join(', ')}`, 'error');
+
+  // Union of everyone who shows up in either source — kisi ka sirf Daily Task
+  // ho (koi delegation/checklist/FMS na mila ho) to bhi row bane.
+  const byUser = {};
+  const ensure = (userId, name, department) => {
+    if (!byUser[userId]) byUser[userId] = { userId, name, department: department || '' };
+    return byUser[userId];
+  };
+  misList.forEach(e => {
+    const row = ensure(e.userId, e.name, e.department);
+    row.delegation = e.delegation && e.delegation.total > 0 ? Math.max(0, Math.min(100, 100 + e.delegation.score)) : null;
+    row.checklist  = e.checklist  && e.checklist.total  > 0 ? Math.max(0, Math.min(100, 100 + e.checklist.score))  : null;
+    row.fms        = e.fms && e.fms.total > 0 ? e.fms.score : null;
+  });
+  (fillRows || []).forEach(r => {
+    const row = ensure(r.userId, r.name, r.department);
+    row.dailyTask = r.fillRate;
+  });
+
+  const rows = Object.values(byUser).map(r => {
+    const parts = [r.dailyTask, r.delegation, r.checklist, r.fms].filter(v => v !== null && v !== undefined);
+    r.dailyTask = r.dailyTask ?? null;
+    r.delegation = r.delegation ?? null;
+    r.checklist = r.checklist ?? null;
+    r.fms = r.fms ?? null;
+    r.score360 = parts.length ? Math.round((parts.reduce((a, b) => a + b, 0) / parts.length) * 10) / 10 : null;
+    return r;
+  });
+
+  _score360Data = rows;
+  document.getElementById('s360ExportBtn').style.display = rows.length ? '' : 'none';
+  renderScore360();
+}
+
+function renderScore360() {
+  const box = document.getElementById('s360Results');
+  if (!_score360Data.length) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border)">Select date range and click Generate</div>`; return; }
+
+  const dept = document.getElementById('s360Dept').value;
+  const search = (document.getElementById('s360Search').value || '').toLowerCase().trim();
+  const sortBy = document.getElementById('s360Sort').value;
+
+  let rows = _score360Data.filter(r =>
+    (!dept || r.department === dept) &&
+    (!search || r.name.toLowerCase().includes(search))
+  );
+  if (sortBy === 'score_desc') rows = [...rows].sort((a, b) => (b.score360 ?? -1) - (a.score360 ?? -1));
+  else if (sortBy === 'score_asc') rows = [...rows].sort((a, b) => (a.score360 ?? 101) - (b.score360 ?? 101));
+  else rows = [...rows].sort((a, b) => a.name.localeCompare(b.name));
+
+  if (!rows.length) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border)">No employees match this filter</div>`; return; }
+
+  const dim = (label, icon, color, value) => {
+    const v = value === null ? null : Math.round(value);
+    return `<div style="display:flex;align-items:center;gap:8px;font-size:11px">
+      <span style="width:78px;color:var(--muted-foreground);flex-shrink:0">${icon} ${label}</span>
+      <div style="flex:1;height:6px;background:var(--muted);border-radius:99px;overflow:hidden">
+        <div style="height:100%;width:${v===null?0:v}%;background:${v===null?'var(--muted-foreground)':color};border-radius:99px"></div>
+      </div>
+      <span style="width:32px;text-align:right;font-weight:600;color:var(--foreground)">${v===null?'—':v+'%'}</span>
+    </div>`;
+  };
+
+  box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:16px">
+    ${rows.map(r => {
+      const st = score360Style(r.score360);
+      const initials = r.name.split(' ').map(w=>w[0]).join('').substring(0,2).toUpperCase();
+      return `<div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+          <div style="width:40px;height:40px;border-radius:50%;background:var(--muted);color:var(--foreground);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0">${escapeHtml(initials)}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:14px;color:var(--foreground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(r.name)}</div>
+            <div style="font-size:11px;color:var(--muted-foreground)">${escapeHtml(r.department||'—')}</div>
+          </div>
+          <div style="text-align:center;flex-shrink:0">
+            <div style="font-size:22px;font-weight:800;color:${st.color};line-height:1">${r.score360===null?'—':r.score360}</div>
+            <div style="font-size:9px;color:${st.color};font-weight:700;text-transform:uppercase;letter-spacing:.3px">${st.label}</div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:7px">
+          ${dim('Daily Task','📝','var(--chart-1)', r.dailyTask)}
+          ${dim('Delegation','📋','var(--accent-foreground)', r.delegation)}
+          ${dim('Checklist','✅','var(--success)', r.checklist)}
+          ${dim('FMS','📊','var(--chart-5)', r.fms)}
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function exportScore360() {
+  if (!_score360Data.length) return;
+  const lines = ['Employee,Department,Daily Task %,Delegation %,Checklist %,FMS %,360 Score'];
+  _score360Data.forEach(r => {
+    lines.push([r.name, r.department||'', r.dailyTask??'', r.delegation??'', r.checklist??'', r.fms??'', r.score360??'']
+      .map(v => `"${String(v).replace(/"/g,'""')}"`).join(','));
+  });
+  downloadFile(lines.join('\n'), `employee_360_score_${document.getElementById('s360Start').value}_to_${document.getElementById('s360End').value}.csv`);
 }
 
 // ══════════════════════════════════════════════════════

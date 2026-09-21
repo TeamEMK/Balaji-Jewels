@@ -66,4 +66,20 @@ function workingDaysInMonth(year, month, weekOffStr, extraOffJson) {
   return count;
 }
 
-module.exports = { parseWeekOff, parseExtraOff, isExtraOff, toISO, nextWorkingDay, workingDaysInMonth };
+// Kisi bhi date range (mahina boundary se bandhe bina) me is user ke liye
+// kitne working days hain — Employee 360 Score ke "Daily Task fill rate" ke
+// liye chahiye, jahan range ek hafta, mahina, ya kuch bhi ho sakta hai.
+function workingDaysInRange(startISO, endISO, weekOffStr, extraOffJson) {
+  const weekOff = parseWeekOff(weekOffStr);
+  const extraOff = parseExtraOff(extraOffJson);
+  let count = 0;
+  const d = new Date(startISO + 'T00:00:00');
+  const end = new Date(endISO + 'T00:00:00');
+  while (d <= end) {
+    if (d.getDay() !== 0 && !weekOff.includes(d.getDay()) && !isExtraOff(d, extraOff)) count++;
+    d.setDate(d.getDate() + 1);
+  }
+  return count;
+}
+
+module.exports = { parseWeekOff, parseExtraOff, isExtraOff, toISO, nextWorkingDay, workingDaysInMonth, workingDaysInRange };
