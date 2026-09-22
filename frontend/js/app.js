@@ -5299,19 +5299,19 @@ function renderLateMIS(data) {
     return;
   }
 
-  const tableRows = rows.map(r => `<tr>
+  const tableRows = rows.map(r => `<tr style="cursor:pointer" onclick="openLateTaskDetail('${r.userId}','${(r.name||'').replace(/'/g,"\\'")}')" title="Click to see this employee's full task breakdown">
     <td><span style="font-size:11px;font-weight:600;color:${LATE_TYPE_COLOR[r.type]||'var(--foreground)'}">${LATE_TYPE_LABEL[r.type]||r.type}</span></td>
-    <td style="font-weight:600">${escapeHtml(r.name||'')}<div style="font-size:11px;color:var(--muted-foreground);font-weight:400">${escapeHtml(r.department||'—')}</div></td>
+    <td style="font-weight:600;color:var(--primary);text-decoration:underline dotted">${escapeHtml(r.name||'')}<div style="font-size:11px;color:var(--muted-foreground);font-weight:400;text-decoration:none">${escapeHtml(r.department||'—')}</div></td>
     <td style="font-size:12px">${escapeHtml(r.description||'')}</td>
     <td style="color:var(--muted-foreground);white-space:nowrap">${r.dueDate ? fmtDate(r.dueDate) : '—'}</td>
     <td style="text-align:center"><span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:color-mix(in srgb,var(--destructive) 12%,transparent);color:var(--destructive)">${r.daysLate}d late</span></td>
   </tr>`).join('');
 
   container.innerHTML = `
-    <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:10px;padding:0 4px">🔴 <strong>${rows.length}</strong> task(s) currently late — Delegation, Checklist aur FMS teeno mila ke, chahe kisi ka bhi ho.</div>
+    <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:10px;padding:0 4px">🔴 <strong>${rows.length}</strong> task(s) currently late — Delegation, Checklist aur FMS teeno mila ke, chahe kisi ka bhi ho. <span style="opacity:.8">(Kisi bhi row par click karke us employee ka poora breakdown dekho.)</span></div>
     <div class="mis-table-wrap">
       <table>
-        <thead><tr><th>Type</th><th>Employee</th><th>Task</th><th>Due Date</th><th style="text-align:center">Days Late</th></tr></thead>
+        <thead><tr><th>Type</th><th>Employee <span style="font-weight:400;color:var(--muted-foreground);font-size:10px">(click for details)</span></th><th>Task</th><th>Due Date</th><th style="text-align:center">Days Late</th></tr></thead>
         <tbody>${tableRows}</tbody>
       </table>
     </div>`;
@@ -5452,6 +5452,25 @@ function renderAllMIS(data, fmsData) {
 }
 
 // Open All MIS detail modal for employee
+// Late Tasks tab se kisi employee ke naam par click — All MIS ka wahi
+// combined detail modal reuse karta hai (Total/Done/Pending/Delayed/Revised
+// + Delegation/Checklist/FMS teeno ki task list, late/overdue wale already
+// highlighted). Late Tasks tab apna data cache nahi rakhta (sirf late rows),
+// isliye pehli baar /api/mis/all se us employee ka poora data fetch karke
+// misAllData me daal dete hain — dobara click par dobara fetch nahi hota.
+async function openLateTaskDetail(userId, userName) {
+  if (!misAllData.some(e => String(e.userId) === String(userId))) {
+    const start = document.getElementById('misStart').value;
+    const end   = document.getElementById('misEnd').value;
+    const data = await api(withSeg(`/api/mis/all?start=${start}&end=${end}`));
+    if (data && data.error) { showToast(data.error, 'error'); return; }
+    const list = Array.isArray(data) ? data : (data && Array.isArray(data.rows) ? data.rows : []);
+    if (!list.length) { showToast('Could not load this employee\'s details', 'error'); return; }
+    misAllData = list;
+  }
+  openAllMISDetail(userId, userName);
+}
+
 async function openAllMISDetail(userId, userName) {
   const emp = (misAllData || []).find(e => String(e.userId) === String(userId));
   if (!emp) { showToast('Generate report first', 'error'); return; }
