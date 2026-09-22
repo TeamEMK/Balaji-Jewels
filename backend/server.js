@@ -1359,7 +1359,7 @@ async function computeFmsStats(hodDept = '', collectPending = false, dateFrom = 
               planDate, isLate: !!(planDate && planDate < _today)
             });
           }
-          if (collectAll) stepAllRows.push({ fmsName, stepName: step.step_name, planValue: planVal, planDate, status: 'pending' });
+          if (collectAll) stepAllRows.push({ fmsName, stepName: step.step_name, planValue: planVal, planDate, status: 'pending', isLate: !!(planDate && planDate < _today) });
         } else {
           stepDone++;
           if (collectAll) stepAllRows.push({ fmsName, stepName: step.step_name, planValue: planVal, planDate, status: 'done' });
@@ -1372,7 +1372,7 @@ async function computeFmsStats(hodDept = '', collectPending = false, dateFrom = 
       // Per-user attribution: HOD view me sirf dept-doers ko credit (consistency)
       const creditDoers = hodDept ? step.doers.filter(d => (d.department || '') === hodDept) : step.doers;
       for (const d of creditDoers) {
-        if (!result.perUser[d.id]) result.perUser[d.id] = { pending: 0, done: 0, total: 0 };
+        if (!result.perUser[d.id]) result.perUser[d.id] = { pending: 0, done: 0, total: 0, name: d.name, department: d.department || '' };
         result.perUser[d.id].pending += stepPending;
         result.perUser[d.id].done    += stepDone;
         result.perUser[d.id].total   += stepPending + stepDone;
@@ -2845,6 +2845,110 @@ app.get('/api/mis/fms', requireAuth, async (req, res) => {
     // Same shared engine jo /api/mis/all use karta hai => numbers HAMESHA match honge
     const fmsStats = await computeFmsStats(hodDept, false, start, end);
     res.json(fmsStats.perFms);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
+});
+
+// ── FMS MIS — doer-wise (Checklist/Delegation MIS jaisa hi table, per-person
+// Total/Pending/Completed/Delayed/Score) — user ki request: "vese he doer
+// wise chahiye". Sheet/step-wise breakdown (perFms) ab bhi /api/mis/fms se
+// milta hai (All MIS ki FMS Overview section isi ko use karti hai). ──
+app.get('/api/mis/fms-users', requireAuth, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) return res.status(400).json({ error: 'Dates required' });
+    if (req.session.role === 'user') return res.json([]);
+    const isHod = req.session.role === 'hod';
+    const uid = req.session.userId;
+
+    let hodDept = '';
+    if (isHod) {
+      const [meRow] = await db.query('SELECT department FROM users WHERE id=?', [uid]);
+      hodDept = meRow[0]?.department || '';
+    }
+
+    // collectPending=true — 'delayed' (late pending) count ke liye chahiye
+    const fmsStats = await computeFmsStats(hodDept, true, start, end);
+    const rows = Object.entries(fmsStats.perUser).map(([id, u]) => {
+      const total = u.done + u.pending;
+      const delayed = ((fmsStats.perUserPending && fmsStats.perUserPending[id]) || []).filter(r => r.isLate).length;
+      const score = calcMisScore({ total, pending: u.pending, overdue: delayed, notOnTime: 0, revised: 0 });
+      return { userId: parseInt(id), name: u.name || '', department: u.department || '', total, pending: u.pending, completed: u.done, delayed, score };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+
+    if (fmsStats.errors.length) return res.json({ rows, fmsErrors: fmsStats.errors });
+    res.json(rows);
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
+});
+
+// ── Late Tasks — ek combined, flat list: Delegation + Checklist + FMS me se
+// jo bhi abhi 'late' hai (pending + due date nikal chuki), kisi ka bhi ho.
+// Har doosra MIS tab per-person summary deta hai — ye ek hi jagah sabka
+// "kya late chal raha hai" dikhata hai, task-level detail ke saath. ──
+app.get('/api/mis/late', requireAuth, async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) return res.status(400).json({ error: 'Dates required' });
+    const isHod = req.session.role === 'hod';
+    const isSelfOnly = req.session.role === 'user';
+    const uid = req.session.userId;
+
+    let myDept = '';
+    if (isHod) {
+      const [me] = await db.query('SELECT department FROM users WHERE id=?', [uid]);
+      myDept = me[0]?.department || '';
+    }
+
+    let deptFilter = '', params = [start, end];
+    if (isSelfOnly) { deptFilter = 'AND u.id=?'; params.push(uid); }
+    else if (isHod) { deptFilter = 'AND u.department=?'; params.push(myDept); }
+    const segL = segmentFilter(req, 'u');
+    if (segL.param) { deptFilter += segL.clause; params.push(segL.param); }
+
+    const today = _istParts().dateStr;
+    const daysLate = (d) => Math.max(0, Math.round((new Date(today + 'T00:00:00') - new Date(d + 'T00:00:00')) / 86400000));
+
+    const [delRows] = await db.query(
+      `SELECT u.id AS "userId", u.name, u.department, t.description,
+        TO_CHAR(t.due_date,'YYYY-MM-DD') AS due_date
+       FROM delegation_tasks t JOIN users u ON t.assigned_to=u.id
+       WHERE t.status='pending' AND t.due_date < CURRENT_DATE AND t.due_date BETWEEN ? AND ? ${deptFilter}
+       ORDER BY t.due_date ASC`, params);
+
+    const [chlRows] = await db.query(
+      `SELECT u.id AS "userId", u.name, u.department, t.description,
+        TO_CHAR(t.due_date,'YYYY-MM-DD') AS due_date
+       FROM checklist_tasks t JOIN users u ON t.assigned_to=u.id
+       WHERE t.status='pending' AND t.due_date < CURRENT_DATE AND t.due_date BETWEEN ? AND ? ${deptFilter}
+       ORDER BY t.due_date ASC`, params);
+
+    const rows = [];
+    delRows.forEach(r => rows.push({ type: 'delegation', userId: r.userId, name: r.name, department: r.department || '', description: r.description, dueDate: r.due_date, daysLate: daysLate(r.due_date) }));
+    chlRows.forEach(r => rows.push({ type: 'checklist', userId: r.userId, name: r.name, department: r.department || '', description: r.description, dueDate: r.due_date, daysLate: daysLate(r.due_date) }));
+
+    // ── FMS — ROLE-INDEPENDENT crediting (hodDept='', /api/mis/all jaisa),
+    // phir yahan JS me hi self/dept scope lagao — taaki numbers har jagah match karein.
+    let fmsErrors = [];
+    try {
+      const fmsStats = await computeFmsStats('', true, start, end);
+      fmsErrors = fmsStats.errors || [];
+      for (const [userIdStr, list] of Object.entries(fmsStats.perUserPending || {})) {
+        const userIdNum = parseInt(userIdStr, 10);
+        const u = (fmsStats.perUser && fmsStats.perUser[userIdStr]) || {};
+        if (isSelfOnly && userIdNum !== uid) continue;
+        if (isHod && (u.department || '') !== myDept) continue;
+        list.filter(t => t.isLate).forEach(t => {
+          rows.push({
+            type: 'fms', userId: userIdNum, name: u.name || '', department: u.department || '',
+            description: `${t.fmsName} — ${t.stepName}`, dueDate: t.planDate || '',
+            daysLate: t.planDate ? daysLate(t.planDate) : 0
+          });
+        });
+      }
+    } catch (e) { fmsErrors.push('FMS data unavailable'); }
+
+    rows.sort((a, b) => b.daysLate - a.daysLate);
+    if (fmsErrors.length) return res.json({ rows, fmsErrors });
+    res.json(rows);
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
 });
 

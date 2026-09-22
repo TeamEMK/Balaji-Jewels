@@ -547,7 +547,6 @@ function _restoreActivePage() {
 // hai (sirf log_type badalta hai).
 // ══════════════════════════════════════════════════════
 let dtType = 'daily';
-let dtClients = [];
 let dtDepartments = []; // existing Departments list (Users me jo use hoti hai) reuse ki
 let dtRowCounter = 0; // har row ko unique id dene ke liye (DOM lookup ke liye)
 
@@ -555,51 +554,15 @@ function dtToday() { return new Date().toISOString().split('T')[0]; }
 
 async function initDailyTaskPage() {
   document.getElementById('dtDoerDisplay').value = ME.name;
-  document.getElementById('dtManageClientsBtn').style.display = (ME.role === 'admin') ? '' : 'none';
   const dateEl = document.getElementById('dtEntryDate');
   if (!dateEl.value) dateEl.value = dtToday();
   dtType = 'daily';
   document.getElementById('dtTabDaily').classList.add('active');
   document.getElementById('dtTabExtra').classList.remove('active');
-  const [clients, depts] = await Promise.all([api('/api/daily-task/clients'), api('/api/departments')]);
-  dtClients = Array.isArray(clients) ? clients : [];
+  const depts = await api('/api/departments');
   dtDepartments = Array.isArray(depts) ? depts : [];
   await dtLoadForDate();
   dtLoadPastSubmissions();
-}
-
-// Admin — naya client naam list me add karo (dropdown turant refresh ho jaata hai)
-async function dtManageClients() {
-  const name = await promptDialog('Add a new client name (this appears in the dropdown for everyone):', { title: 'Manage Clients', okText: 'Add', placeholder: 'Client name' });
-  if (!name || !name.trim()) return;
-  const r = await api('/api/daily-task/clients', 'POST', { name: name.trim() });
-  if (r.error) { showToast(r.error, 'error'); return; }
-  dtClients = r;
-  document.querySelectorAll('#dtRowsBody .dt-client').forEach(sel => {
-    const cur = sel.value;
-    sel.innerHTML = dtClientOptionsHtml(cur);
-  });
-  showToast('Client added!');
-}
-
-// Admin — FMS sheets ("Order to Quotation" jaisi) ke "Client Name" column
-// se saare unique naam khud utha ke list me jod do. Dobara chalane par sirf
-// naye naam add honge, purane duplicate nahi honge.
-async function dtSyncClientsFromFms() {
-  const btn = document.getElementById('dtSyncFmsBtn');
-  btn.disabled = true; btn.textContent = '⏳ Syncing…';
-  try {
-    const r = await api('/api/daily-task/clients/sync-fms', 'POST');
-    if (r.error) { showToast(r.error, 'error'); return; }
-    dtClients = r.clients;
-    document.querySelectorAll('#dtRowsBody .dt-client').forEach(sel => {
-      const cur = sel.value;
-      sel.innerHTML = dtClientOptionsHtml(cur);
-    });
-    showToast(r.added ? `✅ ${r.added} new client(s) added from FMS! (${r.total} total)` : `No new clients found in FMS (${r.total} already in list)`);
-  } finally {
-    btn.disabled = false; btn.textContent = '🔄 Sync from FMS';
-  }
 }
 
 function dtSwitchType(type) {
@@ -618,17 +581,13 @@ async function dtLoadForDate() {
   body.innerHTML = '';
   const rows = await api(`/api/daily-task/mine/${date}?logType=${dtType}`);
   if (Array.isArray(rows) && rows.length) {
-    rows.forEach(r => dtAddRow({ clientName: r.client_name, department: r.department, description: r.description, minutes: r.minutes }));
+    rows.forEach(r => dtAddRow({ department: r.department, description: r.description, minutes: r.minutes }));
   } else {
     dtAddRow({ department: ME.department || '' });
   }
   dtRecalcTotal();
 }
 
-function dtClientOptionsHtml(selected) {
-  const opts = dtClients.map(c => `<option value="${escapeHtml(c)}" ${c===selected?'selected':''}>${escapeHtml(c)}</option>`).join('');
-  return `<option value="">--select--</option>${opts}`;
-}
 function dtDeptOptionsHtml(selected) {
   // Selected department list me na ho (jaise user ka apna department ab
   // renamed/deleted ho chuka) to bhi option list me dikhta rahe — warna
@@ -646,7 +605,6 @@ function dtAddRow(prefill) {
   const cellStyle = 'padding:8px 10px;border-bottom:1px solid var(--border)';
   const fieldStyle = 'width:100%;padding:7px 9px;border:1.5px solid var(--border);border-radius:7px;font-size:13px;font-family:\'Inter\',sans-serif;outline:none;background:var(--card);color:var(--foreground)';
   tr.innerHTML = `
-    <td style="${cellStyle}"><select class="dt-client" style="${fieldStyle}">${dtClientOptionsHtml(prefill.clientName||'')}</select></td>
     <td style="${cellStyle}"><select class="dt-dept" style="${fieldStyle}">${dtDeptOptionsHtml(prefill.department||'')}</select></td>
     <td style="${cellStyle}"><textarea class="dt-desc" placeholder="What did you do?" style="${fieldStyle};min-height:38px;resize:vertical">${escapeHtml(prefill.description||'')}</textarea></td>
     <td style="${cellStyle}"><input type="number" min="0" class="dt-mins" value="${prefill.minutes||''}" placeholder="0" oninput="dtRecalcTotal()" style="${fieldStyle}"/></td>
@@ -658,7 +616,6 @@ function dtAddRow(prefill) {
 function dtDupRow(btn) {
   const tr = btn.closest('tr');
   dtAddRow({
-    clientName: tr.querySelector('.dt-client').value,
     department: tr.querySelector('.dt-dept').value,
     description: tr.querySelector('.dt-desc').value,
     minutes: tr.querySelector('.dt-mins').value,
@@ -683,7 +640,6 @@ async function dtSubmitAll() {
   const entryDate = document.getElementById('dtEntryDate').value;
   if (!entryDate) { showToast('Select an entry date', 'error'); return; }
   const rows = [...document.querySelectorAll('#dtRowsBody tr')].map(tr => ({
-    clientName: tr.querySelector('.dt-client').value,
     department: tr.querySelector('.dt-dept').value,
     description: tr.querySelector('.dt-desc').value.trim(),
     minutes: tr.querySelector('.dt-mins').value,
@@ -4764,8 +4720,10 @@ async function saveWeekPlan() {
 // ══════════════════════════════════════════════════════
 let misType = 'delegation';
 let misData = {};
-let misFMSData = [];
+let misFMSData = [];     // sheet/step-wise (perFms) — All MIS ki FMS Overview section ke liye
+let misFMSUserData = []; // doer-wise (byUser) — FMS MIS tab ke liye
 let misAllData = [];
+let misLateData = [];
 
 // Department filter (Admin only)
 async function initMISDeptFilter() {
@@ -4802,8 +4760,11 @@ function filterMISDept() {
     renderAllMIS(misAllData, misFMSData);
   } else if (misType === 'delegation' || misType === 'checklist') {
     renderMIS(misData);
+  } else if (misType === 'fms') {
+    renderFMSMIS(misFMSUserData);
+  } else if (misType === 'late') {
+    renderLateMIS(misLateData);
   }
-  // FMS MIS tab does not have per-user dept data, skip
 }
 
 function getSelectedMISDept() {
@@ -4815,17 +4776,19 @@ function switchMisTab(type, el) {
   misType = type;
   document.querySelectorAll('#page-mis .tab').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
-  // Department dropdown: show only on 'all' and delegation/checklist tabs for admin
+  // Department dropdown: har tab par kaam karta hai ab (FMS aur Late Tasks
+  // dono me bhi department field hoti hai rows me)
   const deptWrap = document.getElementById('misDeptFilterWrap');
-  if (deptWrap && ME && ME.role === 'admin') {
-    deptWrap.style.display = (type !== 'fms') ? '' : 'none';
-  }
+  if (deptWrap && ME && ME.role === 'admin') deptWrap.style.display = '';
   if (type === 'fms') {
-    if (misFMSData.length) renderFMSMIS(misFMSData);
+    if (misFMSUserData.length) renderFMSMIS(misFMSUserData);
     else document.getElementById('misResults').innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Click Generate to load FMS MIS</div>`;
   } else if (type === 'all') {
     if (misAllData.length) renderAllMIS(misAllData, misFMSData);
     else document.getElementById('misResults').innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Click Generate to load All MIS</div>`;
+  } else if (type === 'late') {
+    if (misLateData.length) renderLateMIS(misLateData);
+    else document.getElementById('misResults').innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Click Generate to load Late Tasks</div>`;
   } else {
     if (Object.keys(misData).length) renderMIS(misData);
   }
@@ -4843,14 +4806,34 @@ async function generateMIS() {
   document.getElementById('misResults').innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Loading…</div>`;
 
   if (misType === 'fms') {
-    const data = await api(`/api/mis/fms?start=${start}&end=${end}`);
-    if (data.error) {
+    const data = await api(`/api/mis/fms-users?start=${start}&end=${end}`);
+    if (data && data.error) {
       document.getElementById('misResults').innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${data.error}</div>`;
       showToast(data.error,'error');
       return;
     }
-    misFMSData = data;
-    renderFMSMIS(data);
+    // Array (sab theek) ya {rows, fmsErrors} (kuch sheet fail) — dono shape handle karo
+    let fmsErrors = [];
+    if (Array.isArray(data)) { misFMSUserData = data; }
+    else if (data && Array.isArray(data.rows)) { misFMSUserData = data.rows; fmsErrors = data.fmsErrors || []; }
+    else { misFMSUserData = []; }
+    populateMISDeptDropdown(misFMSUserData);
+    renderFMSMIS(misFMSUserData);
+    if (fmsErrors.length) showToast(`⚠️ ${fmsErrors.length} FMS sheet(s) did not load — please Generate again`, 'error');
+  } else if (misType === 'late') {
+    const data = await api(withSeg(`/api/mis/late?start=${start}&end=${end}`));
+    if (data && data.error) {
+      document.getElementById('misResults').innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${data.error}</div>`;
+      showToast(data.error,'error');
+      return;
+    }
+    let fmsErrors = [];
+    if (Array.isArray(data)) { misLateData = data; }
+    else if (data && Array.isArray(data.rows)) { misLateData = data.rows; fmsErrors = data.fmsErrors || []; }
+    else { misLateData = []; }
+    populateMISDeptDropdown(misLateData);
+    renderLateMIS(misLateData);
+    if (fmsErrors.length) showToast(`⚠️ ${fmsErrors.length} FMS sheet(s) did not load — FMS late tasks might be incomplete`, 'error');
   } else if (misType === 'all') {
     document.getElementById('misResults').innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Loading…</div>`;
     try {
@@ -5132,15 +5115,22 @@ function exportMIS() {
   const dateSuffix = `${document.getElementById('misStart').value}_to_${document.getElementById('misEnd').value}`;
 
   if (misType === 'fms') {
-    if (!misFMSData || !misFMSData.length) { showToast('Generate FMS report first','error'); return; }
-    const lines = ['FMS Name,Step,Doer(s),Total,Pending,Done'];
-    misFMSData.forEach(fms => {
-      lines.push([esc(fms.fmsName), 'Total', '', fms.total||0, fms.pending||0, fms.done||0].join(','));
-      (fms.steps||[]).forEach(s => {
-        lines.push([esc(fms.fmsName), esc(`Step ${s.stepOrder}: ${s.stepName}`), esc(s.doers||''), s.total||0, s.pending||0, s.done||0].join(','));
-      });
+    if (!misFMSUserData || !misFMSUserData.length) { showToast('Generate FMS report first','error'); return; }
+    const lines = ['Name,Department,Total,Pending,Completed,Delayed,Score%'];
+    misFMSUserData.forEach(r => {
+      lines.push([esc(r.name), esc(r.department||''), r.total||0, r.pending||0, r.completed||0, r.delayed||0, fmtScore(r.score)].join(','));
     });
     downloadCSV(lines.join('\n'), `FMS_MIS_${dateSuffix}.csv`);
+    return;
+  }
+
+  if (misType === 'late') {
+    if (!misLateData || !misLateData.length) { showToast('Generate Late Tasks report first','error'); return; }
+    const lines = ['Type,Employee,Department,Task,Due Date,Days Late'];
+    misLateData.forEach(r => {
+      lines.push([esc(LATE_TYPE_LABEL[r.type]||r.type), esc(r.name||''), esc(r.department||''), esc(r.description||''), r.dueDate||'', r.daysLate||0].join(','));
+    });
+    downloadCSV(lines.join('\n'), `Late_Tasks_${dateSuffix}.csv`);
     return;
   }
 
@@ -5192,49 +5182,139 @@ function exportMIS() {
   downloadCSV(lines.join('\n'), `MIS_${misType}_${dateSuffix}.csv`);
 }
 
+// Doer-wise FMS MIS — Checklist MIS/Delegation MIS jaisa hi table (Name
+// click karo to us employee ke saare FMS entries ka detail khulta hai).
 function renderFMSMIS(data) {
   const container = document.getElementById('misResults');
-  if (!data || !data.length) {
-    container.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">No FMS data found</div>`;
+  let rows = data || [];
+
+  const selectedDept = getSelectedMISDept();
+  if (selectedDept) rows = rows.filter(r => (r.department || '').trim() === selectedDept);
+
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">No FMS data found for this date range</div>`;
     return;
   }
-  const sections = data.map(fms => {
-    const hasError = fms.error;
-    const stepRows = (fms.steps||[]).map(s => `
-      <tr>
-        <td style="padding-left:24px;color:var(--muted-foreground);font-size:12px">Step ${s.stepOrder}: ${s.stepName}</td>
-        <td style="font-size:12px;color:var(--muted-foreground)">${s.doers}</td>
-        <td style="font-weight:600;color:var(--primary)">${s.total}</td>
-        <td style="color:var(--destructive);font-weight:600">${s.pending}</td>
-        <td style="color:var(--success);font-weight:600">${s.done}</td>
-        <td>
-          ${s.total > 0 ? `
-          <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden;width:80px">
-            <div style="height:100%;background:var(--success);border-radius:3px;width:${Math.round((s.done/s.total)*100)}%"></div>
-          </div>
-          <div style="font-size:11px;color:var(--muted-foreground);margin-top:2px">${Math.round((s.done/s.total)*100)}% done</div>` : '—'}
-        </td>
-      </tr>`).join('');
 
-    return `
-      <div class="mis-table-wrap" style="margin-bottom:16px">
-        <div style="background:var(--muted);padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
-          <div style="font-size:14px;font-weight:700;color:var(--foreground)">📊 ${fms.fmsName}</div>
-          <div style="display:flex;gap:16px;font-size:13px">
-            <span>Total: <strong style="color:var(--primary)">${fms.total}</strong></span>
-            <span>Pending: <strong style="color:var(--destructive)">${fms.pending}</strong></span>
-            <span>Done: <strong style="color:var(--success)">${fms.done}</strong></span>
-            ${hasError ? `<span style="color:var(--destructive);font-size:11px">⚠️ ${fms.error}</span>` : ''}
-          </div>
+  const tableRows = rows.map(r => {
+    const st = misScoreStyle(r.score);
+    return `<tr style="cursor:pointer" onclick="openFMSMISDetail('${r.userId}','${(r.name||'').replace(/'/g,"\\'")}')" title="Click to see FMS task details">
+      <td>
+        <span style="font-weight:600;color:var(--primary);text-decoration:underline dotted">${escapeHtml(r.name||'')}</span>
+        <div style="font-size:11px;color:var(--muted-foreground);margin-top:2px">${escapeHtml(r.department||'—')}</div>
+      </td>
+      <td style="font-weight:700">${r.total}</td>
+      <td style="color:var(--destructive);font-weight:600">${r.pending}</td>
+      <td style="color:var(--success);font-weight:600">${r.completed}</td>
+      <td style="color:var(--destructive);font-weight:600">${r.delayed||0}</td>
+      <td>
+        <div style="font-size:14px;font-weight:700;color:${st.color}">${r.score.toFixed(1)}%</div>
+        <div style="font-size:10px;color:var(--muted-foreground);margin-top:1px">${st.label}</div>
+        <div class="mis-score-bar">
+          <div class="mis-score-fill" style="width:${st.width}%;background:${st.bar}"></div>
         </div>
-        <table>
-          <thead><tr><th>Step</th><th>Doer(s)</th><th>Total</th><th>Pending</th><th>Done</th><th>Progress</th></tr></thead>
-          <tbody>${stepRows || `<tr><td colspan="6" class="empty">No step data</td></tr>`}</tbody>
-        </table>
-      </div>`;
+      </td>
+    </tr>`;
   }).join('');
 
-  container.innerHTML = sections;
+  container.innerHTML = `
+    <div class="mis-table-wrap">
+      <table>
+        <thead><tr>
+          <th>Name <span style="font-weight:400;color:var(--muted-foreground);font-size:10px">(click for details)</span></th>
+          <th>Total</th><th>Pending</th><th>Completed</th><th title="Pending FMS entries whose planned date has already passed">Delayed</th><th>Score %</th>
+        </tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>
+    <div style="font-size:12px;color:var(--muted-foreground);margin-top:10px;padding:0 4px">
+      * Score: 0% = All completed on time | Negative = Pending/delayed FMS entries reduce score
+    </div>`;
+}
+
+// FMS MIS detail modal — ek employee ke saare FMS entries, "date range me"
+async function openFMSMISDetail(userId, userName) {
+  const row = (misFMSUserData || []).find(r => String(r.userId) === String(userId));
+  if (!row) { showToast('Data not found, please Generate again', 'error'); return; }
+
+  const start = document.getElementById('misStart').value;
+  const end   = document.getElementById('misEnd').value;
+  const data = await api(`/api/mis/detail-fms?userId=${userId}&start=${start}&end=${end}`);
+  const today = new Date().toISOString().split('T')[0];
+
+  const score = row.score;
+  const scoreColor = misScoreStyle(score).color;
+  let scoreReason = '';
+  if (score === 0) scoreReason = '✅ All FMS entries completed on time — perfect score!';
+  else {
+    const parts = [];
+    if (row.pending > 0) parts.push(`${row.pending} entry(ies) still pending`);
+    if (row.delayed > 0) parts.push(`${row.delayed} entry(ies) past planned date`);
+    scoreReason = '⚠️ Score reduced because: ' + parts.join(', ');
+  }
+
+  document.getElementById('misDetailTitle').textContent = `${userName} — FMS Tasks`;
+  document.getElementById('misDetailScore').innerHTML = `
+    <div style="font-size:28px;font-weight:800;color:${scoreColor}">${score.toFixed(1)}%</div>
+    <div style="font-size:12px;color:var(--muted-foreground);margin-top:4px">${scoreReason}</div>
+    <div style="display:flex;gap:16px;margin-top:10px;font-size:13px;flex-wrap:wrap">
+      <span>📊 Total: <strong>${row.total}</strong></span>
+      <span style="color:var(--success)">✅ Completed: <strong>${row.completed}</strong></span>
+      <span style="color:var(--destructive)">⏳ Pending: <strong>${row.pending}</strong></span>
+      <span style="color:var(--destructive)">⏰ Delayed: <strong>${row.delayed||0}</strong></span>
+    </div>
+    ${data.truncated ? `<div style="font-size:11px;color:var(--muted-foreground);margin-top:6px">Showing latest ${data.tasks.length} of ${data.total} — narrow the date range to see all.</div>` : ''}`;
+
+  document.getElementById('misDetailBody').innerHTML = `
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>FMS / Step</th><th>Planned Date</th><th>Status</th></tr></thead>
+        <tbody>${(data.tasks || []).map(t => `
+          <tr>
+            <td>${escapeHtml(t.fmsName||'')}<div style="font-size:10px;color:var(--muted-foreground)">${escapeHtml(t.stepName||'')}</div></td>
+            <td style="color:var(--muted-foreground);white-space:nowrap">${t.planDate ? fmtDate(t.planDate) : escapeHtml(t.planValue||'—')}</td>
+            <td>${t.status==='done'
+              ? `<span class="status-badge completed">Done</span>`
+              : `<span class="status-badge pending">Pending</span>${t.planDate && t.planDate < today ? ' <span style="font-size:10px;color:var(--destructive);font-weight:600">⏰ Late</span>' : ''}`}</td>
+          </tr>`).join('') || `<tr><td colspan="3" class="empty" style="font-size:12px">No FMS entries</td></tr>`}</tbody>
+      </table>
+    </div>`;
+  document.getElementById('misDetailModal').classList.add('open');
+}
+
+// ── Late Tasks — combined flat list, Delegation + Checklist + FMS, kisi ka
+// bhi ho, jo abhi pending + due date nikal chuki hai. "kisi ke bhi" late
+// tasks dekhne ke liye — doer-wise score se alag, task-level view. ──
+const LATE_TYPE_LABEL = { delegation: '📋 Delegation', checklist: '✅ Checklist', fms: '📊 FMS' };
+const LATE_TYPE_COLOR = { delegation: 'var(--chart-1, var(--primary))', checklist: 'var(--success)', fms: 'var(--chart-5, var(--warning))' };
+function renderLateMIS(data) {
+  const container = document.getElementById('misResults');
+  let rows = data || [];
+
+  const selectedDept = getSelectedMISDept();
+  if (selectedDept) rows = rows.filter(r => (r.department || '').trim() === selectedDept);
+
+  if (!rows.length) {
+    container.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">🎉 No late tasks found for this date range — sab kuch on-track hai!</div>`;
+    return;
+  }
+
+  const tableRows = rows.map(r => `<tr>
+    <td><span style="font-size:11px;font-weight:600;color:${LATE_TYPE_COLOR[r.type]||'var(--foreground)'}">${LATE_TYPE_LABEL[r.type]||r.type}</span></td>
+    <td style="font-weight:600">${escapeHtml(r.name||'')}<div style="font-size:11px;color:var(--muted-foreground);font-weight:400">${escapeHtml(r.department||'—')}</div></td>
+    <td style="font-size:12px">${escapeHtml(r.description||'')}</td>
+    <td style="color:var(--muted-foreground);white-space:nowrap">${r.dueDate ? fmtDate(r.dueDate) : '—'}</td>
+    <td style="text-align:center"><span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:color-mix(in srgb,var(--destructive) 12%,transparent);color:var(--destructive)">${r.daysLate}d late</span></td>
+  </tr>`).join('');
+
+  container.innerHTML = `
+    <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:10px;padding:0 4px">🔴 <strong>${rows.length}</strong> task(s) currently late — Delegation, Checklist aur FMS teeno mila ke, chahe kisi ka bhi ho.</div>
+    <div class="mis-table-wrap">
+      <table>
+        <thead><tr><th>Type</th><th>Employee</th><th>Task</th><th>Due Date</th><th style="text-align:center">Days Late</th></tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>`;
 }
 
 function renderAllMIS(data, fmsData) {
