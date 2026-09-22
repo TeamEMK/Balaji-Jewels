@@ -2185,7 +2185,8 @@ app.get('/api/leaves', requireAuth, async (req, res) => {
               TO_CHAR(lr.from_date,'YYYY-MM-DD') AS from_date,
               TO_CHAR(lr.to_date,'YYYY-MM-DD') AS to_date,
               lr.reason, lr.status, lr.approver_note, a.name AS "approverName",
-              TO_CHAR(lr.created_at,'YYYY-MM-DD') AS applied_on
+              TO_CHAR(lr.created_at,'YYYY-MM-DD') AS applied_on,
+              lr.attachment IS NOT NULL AS "hasAttachment"
        FROM leave_requests lr
        JOIN users u ON lr.user_id=u.id
        LEFT JOIN users a ON lr.approver_id=a.id
@@ -2194,19 +2195,56 @@ app.get('/api/leaves', requireAuth, async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
 });
 
-// Apply — koi bhi logged-in user apni leave apply kar sakta hai
+// Apply — koi bhi logged-in user apni leave apply kar sakta hai. Attachment
+// (photo/PDF) optional hai — frontend sirf 1 din se zyada wali leave par
+// dikhata hai (doctor's prescription, wedding card jaisa proof), lekin
+// backend kisi bhi leave_type/duration par isko accept kar leta hai.
 app.post('/api/leaves', requireAuth, async (req, res) => {
   try {
-    const { leave_type, from_date, to_date, reason } = req.body;
+    const { leave_type, from_date, to_date, reason, attachment, attachmentName } = req.body;
     const valid = ['full_day','half_day']; // Work From Home hata diya (purane records phir bhi display hote hain)
     if (!valid.includes(leave_type)) return res.status(400).json({ error: 'Invalid leave type' });
     if (!from_date || !to_date) return res.status(400).json({ error: 'From and To date required' });
     if (from_date > to_date) return res.status(400).json({ error: 'From date must be on or before To date' });
     if (!(reason||'').trim()) return res.status(400).json({ error: 'Reason required' });
+
+    let attachmentVal = null, attachmentNameVal = null;
+    if (attachment) {
+      const dataUrl = String(attachment);
+      if (!/^data:(image\/(jpeg|jpg|png|webp)|application\/pdf);base64,/.test(dataUrl)) {
+        return res.status(400).json({ error: 'Attachment must be a photo (JPG/PNG) or a PDF' });
+      }
+      if (dataUrl.length > 8 * 1024 * 1024) return res.status(413).json({ error: 'Attachment is too large (max ~6MB)' });
+      attachmentVal = dataUrl;
+      attachmentNameVal = String(attachmentName || '').slice(0, 200);
+    }
+
     await db.query(
-      `INSERT INTO leave_requests (user_id, leave_type, from_date, to_date, reason, status) VALUES (?,?,?,?,?,'pending')`,
-      [req.session.userId, leave_type, from_date, to_date, reason.trim()]);
+      `INSERT INTO leave_requests (user_id, leave_type, from_date, to_date, reason, status, attachment, attachment_name) VALUES (?,?,?,?,?,'pending',?,?)`,
+      [req.session.userId, leave_type, from_date, to_date, reason.trim(), attachmentVal, attachmentNameVal]);
     res.json({ success: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
+});
+
+// Leave attachment dekho — list me nahi aata (bahut bhaari), yahan alag se
+// load hota hai. Visibility waisi hi jaisi /api/leaves list ki hai: apni
+// khud ki, ya admin/pc/HR sabki, ya HOD apne department ki.
+app.get('/api/leaves/:id/attachment', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT lr.user_id, lr.attachment, lr.attachment_name, u.department
+       FROM leave_requests lr JOIN users u ON lr.user_id=u.id WHERE lr.id=?`, [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Leave request not found' });
+    const lv = rows[0];
+    const uid = req.session.userId, role = req.session.role;
+    let allowed = String(lv.user_id) === String(uid) || role === 'admin' || role === 'pc' || await _isHRUser(uid);
+    if (!allowed && role === 'hod') {
+      const [me] = await db.query('SELECT department FROM users WHERE id=?', [uid]);
+      allowed = (me[0]?.department || '') === (lv.department || '');
+    }
+    if (!allowed) return res.status(403).json({ error: 'Not allowed' });
+    if (!lv.attachment) return res.status(404).json({ error: 'No attachment on this leave request' });
+    res.json({ attachment: lv.attachment, attachmentName: lv.attachment_name || '' });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
 });
 

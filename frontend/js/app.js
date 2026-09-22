@@ -678,6 +678,9 @@ const LEAVE_STATUS_STYLE = {
   rejected: 'background:color-mix(in srgb,var(--destructive) 10%,transparent);color:var(--destructive)'
 };
 
+let _lvAttachment = null;     // data URL (compressed image ya PDF), ya null
+let _lvAttachmentName = '';
+
 function openApplyLeave() {
   document.getElementById('leaveErr').style.display='none';
   document.getElementById('lvType').value='full_day';
@@ -685,7 +688,59 @@ function openApplyLeave() {
   const today = new Date().toISOString().split('T')[0];
   document.getElementById('lvFrom').value=today;
   document.getElementById('lvTo').value=today;
+  lvRemoveAttachment();
+  lvCheckAttachmentVisibility();
   document.getElementById('applyLeaveModal').classList.add('open');
+}
+
+// 1 din se zyada ki leave ho (From ≠ To) to hi attachment field dikhao —
+// short 1-din leave me proof maangna zaroori nahi.
+function lvCheckAttachmentVisibility() {
+  const from = document.getElementById('lvFrom').value;
+  const to   = document.getElementById('lvTo').value;
+  const show = !!(from && to && to > from);
+  document.getElementById('lvAttachWrap').style.display = show ? '' : 'none';
+  if (!show) lvRemoveAttachment(); // hide hote hi purana attachment bhi clear — accidental leftover na rahe
+}
+
+async function lvHandleAttachment(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const status = document.getElementById('lvAttachStatus');
+  const isPdf = file.type === 'application/pdf';
+  const isImg = file.type.startsWith('image/');
+  if (!isPdf && !isImg) { showToast('Only photos (JPG/PNG) or PDF files are allowed', 'error'); event.target.value=''; return; }
+  if (isPdf && file.size > 6 * 1024 * 1024) { showToast('PDF is too large (max 6MB)', 'error'); event.target.value=''; return; }
+  status.textContent = '⏳ Reading…';
+  try {
+    if (isImg) {
+      _lvAttachment = await compressImage(file, 1400, 0.75);
+    } else {
+      _lvAttachment = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('Could not read the file'));
+        reader.onload = () => resolve(reader.result);
+        reader.readAsDataURL(file);
+      });
+    }
+    _lvAttachmentName = file.name;
+    status.textContent = `✅ ${file.name}`;
+    document.getElementById('lvAttachRemoveBtn').style.display = '';
+  } catch (e) {
+    showToast(e.message || 'Could not read the file', 'error');
+    lvRemoveAttachment();
+  }
+}
+
+function lvRemoveAttachment() {
+  _lvAttachment = null;
+  _lvAttachmentName = '';
+  const fileEl = document.getElementById('lvAttachFile');
+  if (fileEl) fileEl.value = '';
+  const status = document.getElementById('lvAttachStatus');
+  if (status) status.textContent = '';
+  const removeBtn = document.getElementById('lvAttachRemoveBtn');
+  if (removeBtn) removeBtn.style.display = 'none';
 }
 
 async function submitLeave() {
@@ -702,15 +757,39 @@ async function submitLeave() {
   const btn = document.getElementById('lvSubmitBtn');
   btn.disabled = true; btn.textContent = 'Applying…';
   try {
-    const r = await api('/api/leaves','POST',{leave_type, from_date, to_date, reason});
+    const r = await api('/api/leaves','POST',{leave_type, from_date, to_date, reason, attachment: _lvAttachment, attachmentName: _lvAttachmentName});
     if (r.error) { err.textContent=r.error; err.style.display='block'; return; }
     closeModal('applyLeaveModal');
     showToast('Leave request submitted!');
+    lvRemoveAttachment();
     loadLeaves();
     loadLeaveBadge();
   } finally {
     btn.disabled = false; btn.textContent = 'Apply';
   }
+}
+
+// Leave attachment dekho — image inline dikhti hai, PDF ke liye Download/Open button
+async function viewLeaveAttachment(leaveId) {
+  const img = document.getElementById('leaveAttachImg');
+  const pdfBox = document.getElementById('leaveAttachPdf');
+  const loading = document.getElementById('leaveAttachLoading');
+  const dl = document.getElementById('leaveAttachDownload');
+  img.style.display = 'none'; pdfBox.style.display = 'none'; dl.style.display = 'none';
+  loading.style.display = 'block'; loading.textContent = 'Loading…';
+  document.getElementById('leaveAttachMeta').textContent = '';
+  document.getElementById('leaveAttachModal').classList.add('open');
+
+  const r = await api(`/api/leaves/${leaveId}/attachment`);
+  if (r.error) { loading.textContent = r.error; return; }
+  loading.style.display = 'none';
+  const isPdf = (r.attachment || '').startsWith('data:application/pdf');
+  dl.href = r.attachment;
+  dl.download = r.attachmentName || (isPdf ? 'attachment.pdf' : 'attachment.jpg');
+  dl.style.display = '';
+  if (isPdf) { pdfBox.style.display = 'block'; }
+  else { img.src = r.attachment; img.style.display = 'inline-block'; }
+  if (r.attachmentName) document.getElementById('leaveAttachMeta').textContent = r.attachmentName;
 }
 
 // Apni leave approve/reject hote hi email jaana chahiye tha, lekin SMTP setup
@@ -756,7 +835,7 @@ async function loadLeaves() {
       <td>${l.userName}${isMine?' <span style="font-size:10px;color:var(--muted-foreground)">(you)</span>':''}<div style="font-size:11px;color:var(--muted-foreground);margin-top:3px">${staffTypeBadge(l.staff_type)} ${l.department||'—'}</div></td>
       <td style="white-space:nowrap">${LEAVE_TYPE_LABEL[l.leave_type]||l.leave_type}</td>
       <td style="white-space:nowrap;font-size:12px">${fmtDate(l.from_date)}${l.to_date!==l.from_date?` → ${fmtDate(l.to_date)}`:''}</td>
-      <td style="color:var(--muted-foreground);font-size:12px">${l.reason||'—'}</td>
+      <td style="color:var(--muted-foreground);font-size:12px">${l.reason||'—'}${l.hasAttachment?` <span onclick="viewLeaveAttachment(${l.id})" title="View attachment" style="cursor:pointer">📎</span>`:''}</td>
       <td><span class="status-badge" style="${LEAVE_STATUS_STYLE[l.status]||''}">${l.status.charAt(0).toUpperCase()+l.status.slice(1)}</span>
         ${l.approverName?`<div style="font-size:10px;color:var(--muted-foreground);margin-top:2px">by ${l.approverName}</div>`:''}
         ${l.status==='rejected' && l.approver_note ? `<div style="font-size:11px;color:var(--destructive);margin-top:4px;max-width:220px;line-height:1.4"><b>Reason:</b> ${escapeHtml(l.approver_note)}</div>` : ''}</td>
@@ -4191,7 +4270,7 @@ async function loadLeaveApprovals() {
       <td>${l.userName}<div style="font-size:11px;color:var(--muted-foreground);margin-top:3px">${staffTypeBadge(l.staff_type)} ${l.department||'—'}</div></td>
       <td style="white-space:nowrap">${LEAVE_TYPE_LABEL[l.leave_type]||l.leave_type}</td>
       <td style="white-space:nowrap;font-size:12px">${fmtDate(l.from_date)}${l.to_date!==l.from_date?` → ${fmtDate(l.to_date)}`:''}</td>
-      <td style="color:var(--muted-foreground);font-size:12px">${l.reason||'—'}</td>
+      <td style="color:var(--muted-foreground);font-size:12px">${l.reason||'—'}${l.hasAttachment?` <span onclick="viewLeaveAttachment(${l.id})" title="View attachment" style="cursor:pointer">📎</span>`:''}</td>
       <td style="white-space:nowrap;font-size:12px;color:var(--muted-foreground)">${fmtDate(l.applied_on)}</td>
       <td style="white-space:nowrap">
         <button class="action-btn done" onclick="decideLeave(${l.id},'approved')">Approve</button>

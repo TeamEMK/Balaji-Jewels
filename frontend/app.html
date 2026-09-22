@@ -1697,20 +1697,49 @@
     <div class="form-row">
       <div class="form-group">
         <label>From Date</label>
-        <input type="date" id="lvFrom" onchange="if(!document.getElementById('lvTo').value)document.getElementById('lvTo').value=this.value"/>
+        <input type="date" id="lvFrom" onchange="if(!document.getElementById('lvTo').value)document.getElementById('lvTo').value=this.value;lvCheckAttachmentVisibility()"/>
       </div>
       <div class="form-group">
         <label>To Date</label>
-        <input type="date" id="lvTo"/>
+        <input type="date" id="lvTo" onchange="lvCheckAttachmentVisibility()"/>
       </div>
     </div>
     <div class="form-group">
       <label>Reason</label>
       <textarea id="lvReason" placeholder="Write the reason for leave…" style="min-height:60px"></textarea>
     </div>
+    <!-- 1 din se zyada ki leave ho to hi dikhta hai — doctor's prescription,
+         wedding card jaisa proof attach karne ke liye (optional) -->
+    <div class="form-group" id="lvAttachWrap" style="display:none">
+      <label>Attachment <span style="color:var(--muted-foreground);font-weight:400">(optional — doctor's prescription, wedding card, etc.)</span></label>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <input type="file" id="lvAttachFile" accept="image/*,application/pdf" onchange="lvHandleAttachment(event)" style="font-size:12px;flex:1;min-width:180px"/>
+        <span id="lvAttachStatus" style="font-size:11px;color:var(--muted-foreground)"></span>
+      </div>
+      <button type="button" class="btn btn-outline btn-sm" id="lvAttachRemoveBtn" style="display:none;margin-top:6px" onclick="lvRemoveAttachment()">🗑 Remove attachment</button>
+    </div>
     <div class="modal-footer" style="justify-content:space-between">
       <button class="btn btn-outline" onclick="closeModal('applyLeaveModal')">Cancel</button>
       <button class="btn btn-primary" id="lvSubmitBtn" onclick="submitLeave()">Apply</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     LEAVE ATTACHMENT VIEW MODAL
+══════════════════════════════════════ -->
+<div class="modal-overlay" id="leaveAttachModal">
+  <div class="modal" style="max-width:640px">
+    <h3>📎 Leave Attachment</h3>
+    <div id="leaveAttachMeta" style="font-size:12px;color:var(--muted-foreground);margin-bottom:12px"></div>
+    <div style="background:var(--muted);border:1px solid var(--border);border-radius:10px;padding:10px;text-align:center;min-height:120px">
+      <img id="leaveAttachImg" alt="Leave attachment" style="max-width:100%;max-height:60vh;border-radius:6px;display:none"/>
+      <div id="leaveAttachPdf" style="display:none;padding:30px;color:var(--muted-foreground);font-size:13px">📄 This is a PDF — click Download/Open below to view it.</div>
+      <div id="leaveAttachLoading" style="color:var(--muted-foreground);font-size:13px;padding:30px">Loading…</div>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn btn-outline" onclick="closeModal('leaveAttachModal')">Close</button>
+      <a id="leaveAttachDownload" class="btn btn-primary" href="#" target="_blank" download="attachment" style="text-decoration:none;display:none">⬇ Download / Open</a>
     </div>
   </div>
 </div>
