@@ -6197,6 +6197,15 @@ async function loadFMSAdmin() {
   else if (fmsActiveId) loadFMSDetail(fmsActiveId);
 }
 
+// sheet_id DB me raw jaisa hi save hota hai — admin ne bare ID paste ki ho
+// ya poora link, dono ho sakte hain. Link ho to seedha use karo, bare ID ho
+// to seedha spreadsheet URL bana do.
+function fmsSheetUrl(raw) {
+  const s = (raw || '').trim();
+  if (!s) return '#';
+  return /^https?:\/\//i.test(s) ? s : `https://docs.google.com/spreadsheets/d/${s}/edit`;
+}
+
 async function loadFMSDetail(id) {
   fmsActiveId = id;
   const sheet_data = fmsAllSheets.find(s=>s.id===id);
@@ -6211,7 +6220,8 @@ async function loadFMSDetail(id) {
 
   // Sheet info bar
   document.getElementById('fmsSheetInfoText').innerHTML =
-    `<strong>${sheet.sheet_name}</strong> &nbsp;·&nbsp; Sheet ID: <code style="background:var(--muted);padding:1px 6px;border-radius:4px;font-size:12px">${sheet.sheet_id}</code> &nbsp;·&nbsp; Header Row: ${sheet.header_row}`;
+    `<strong>${sheet.sheet_name}</strong> &nbsp;·&nbsp; Sheet ID: <code style="background:var(--muted);padding:1px 6px;border-radius:4px;font-size:12px">${sheet.sheet_id}</code> &nbsp;·&nbsp; Header Row: ${sheet.header_row}
+     &nbsp;·&nbsp; <a href="${fmsSheetUrl(sheet.sheet_id)}" target="_blank" rel="noopener" style="color:var(--primary);font-weight:600;text-decoration:none">🔗 Open FMS Sheet</a>`;
 
   // Step tabs
   const stepTabsEl = document.getElementById('fmsStepTabs');
