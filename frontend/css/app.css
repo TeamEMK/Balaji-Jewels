@@ -170,7 +170,18 @@ body{
 .logo-text{font-size:14px;font-weight:600;color:var(--sidebar-foreground);letter-spacing:-.01em;opacity:0;transition:opacity .2s .1s;white-space:nowrap;}
 .sidebar:hover .logo-text{opacity:1;}
 
-.nav{padding:10px 8px;flex:1;overflow:hidden;}
+/* min-height:0 zaroori hai — warna flex:1 child apni content ke hisaab se
+   phail jaata hai aur overflow-y:auto kabhi kaam hi nahi karta (flexbox ka
+   jaana-maana gotcha). Naye nav items (Payments, Help Ticket, waghera) aane
+   se list ab kai screens par available height se lambi ho jaati hai —
+   pehle overflow:hidden se neeche wale items bas gayab ho jaate the, ab
+   scroll ho jaate hain. */
+.nav{padding:10px 8px;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;}
+/* Patla, theme-matching scrollbar — hover par hi dikhe, jagah na ghere */
+.nav::-webkit-scrollbar{width:5px;}
+.nav::-webkit-scrollbar-track{background:transparent;}
+.nav::-webkit-scrollbar-thumb{background:var(--sidebar-border);border-radius:3px;}
+.nav::-webkit-scrollbar-thumb:hover{background:var(--sidebar-muted);}
 .nav-item{
   display:flex;align-items:center;gap:10px;
   padding:9px 11px;border-radius:var(--radius-md);cursor:pointer;
