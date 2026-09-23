@@ -19,8 +19,76 @@
 // Sirf admin dekh/badal sakta hai — salary sensitive data hai.
 
 const { workingDaysInMonth } = require('../lib/workdays');
+const { getSheetsClient, extractSpreadsheetId } = require('../lib/google');
 
 const DEFAULT_POLICY = { perDayBasis: 'fixed30', paidLeavePerMonth: 1 };
+
+// Client ki biometric machine "Basic Work Duration Report" export karti hai
+// (Monthly Status Report) — har employee ka 6-row block:
+//   "Emp. Code:", ..., code, ..., "Emp. Name:", ..., name
+//   "Status",  ..., per-din status (P/A/WO/WOP/CL/H/half day), ..., "Late Mark", n
+//   "InTime",  ...per-din in-time..., "Leave", n
+//   "OutTime", ...per-din out-time..., "Sunday", n
+//   "Total",   ...per-din duration..., "Ot", n
+//   (khaali label, per-din deviation minutes, total)
+// Din-columns position-based NAHI hain (report me beech-beech me khaali
+// merged-cell gaps hote hain) — isliye 'Days' header row se column->day
+// mapping banate hain, phir Status row usi mapping se padhte hain.
+const MONTH_ABBR = { jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12 };
+
+function parseWorkDurationReport(rows) {
+  const daysRowIdx = rows.findIndex(r => ((r[0] || '').trim()) === 'Days');
+  if (daysRowIdx < 0) throw new Error("Could not find the 'Days' header row — is this a Basic Work Duration Report sheet?");
+  const daysRow = rows[daysRowIdx];
+  const dayCols = [];
+  for (let i = 2; i < daysRow.length; i++) {
+    const v = (daysRow[i] || '').trim();
+    const m = v.match(/^(\d{1,2})/);
+    if (m) dayCols.push(i);
+  }
+  if (!dayCols.length) throw new Error('Could not read the day columns from the Days row');
+
+  // "Aug 01 2026  To  Aug 31 2026" jaisi line se report ka mahina nikalo —
+  // sirf validation/warning ke liye (selected month se match nahi kiya to block nahi karte, warn karte hain)
+  let reportMonth = null;
+  for (const r of rows.slice(0, 5)) {
+    const text = (r || []).join(' ');
+    const m = text.match(/([A-Za-z]{3})\w*\s+\d{1,2}\s+(\d{4})\s*to/i);
+    if (m) { const mon = MONTH_ABBR[m[1].slice(0, 3).toLowerCase()]; if (mon) { reportMonth = `${m[2]}-${String(mon).padStart(2, '0')}`; break; } }
+  }
+
+  const isPresent = s => /^p$/i.test(s) || /^wop$/i.test(s);
+  const isHalfDay = s => /^half\s*day$/i.test(s);
+
+  const employees = [];
+  for (let i = 0; i < rows.length; i++) {
+    if (((rows[i][0] || '').trim()) !== 'Emp. Code:') continue;
+    const codeRow = rows[i];
+    const nameLabelIdx = codeRow.findIndex(c => (c || '').trim() === 'Emp. Name:');
+    let empCode = '', empName = '';
+    for (let c = 1; c < (nameLabelIdx > -1 ? nameLabelIdx : codeRow.length); c++) {
+      if ((codeRow[c] || '').trim()) { empCode = codeRow[c].trim(); break; }
+    }
+    if (nameLabelIdx > -1) {
+      for (let c = nameLabelIdx + 1; c < codeRow.length; c++) {
+        if ((codeRow[c] || '').trim()) { empName = codeRow[c].trim(); break; }
+      }
+    }
+    const statusRow = rows[i + 1];
+    if (!empName || !statusRow || ((statusRow[0] || '').trim()) !== 'Status') continue; // malformed block — skip, poori sheet fail nahi
+
+    let presentDays = 0;
+    for (const col of dayCols) {
+      const raw = (statusRow[col] || '').trim();
+      if (!raw) continue;
+      if (isPresent(raw)) presentDays += 1;
+      else if (isHalfDay(raw)) presentDays += 0.5;
+      // WO/A/CL/H/absent/Joining — present nahi ginte
+    }
+    employees.push({ empCode, empName, presentDays: Math.round(presentDays * 10) / 10 });
+  }
+  return { reportMonth, employees };
+}
 
 module.exports = function registerPayrollRoutes(app, ctx) {
   const { db, requireAuth, requireAdmin } = ctx;
@@ -98,6 +166,73 @@ module.exports = function registerPayrollRoutes(app, ctx) {
         updated++;
       }
       res.json({ updated, skipped });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
+  });
+
+  // ── Attendance sheet config — spreadsheet ID + tab yaad rakhte hain taaki
+  //    admin ko har mahine dobara paste na karna pade ──
+  app.get('/api/payroll/attendance-sheet-config', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const [rows] = await db.query('SELECT value FROM app_settings WHERE key_name=?', ['payroll_attendance_sheet']);
+      if (!rows[0]) return res.json({ spreadsheetId: '', tabName: 'BasicWorkDurationReport' });
+      try { res.json(JSON.parse(rows[0].value)); }
+      catch (e) { res.json({ spreadsheetId: '', tabName: 'BasicWorkDurationReport' }); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
+  });
+
+  // ── Attendance — biometric "Basic Work Duration Report" Google Sheet se
+  //    preview. Sirf padhta hai, DB me kuch likhta nahi — kyunki biometric
+  //    machine me employees sirf FIRST NAME se hote hain ("HARI", "POOJA"),
+  //    jabki Users list me poora naam hota hai ("Hari Das", "Pooja Dubey").
+  //    Exact match zyada logon ke liye fail hoga, isliye first-name se guess
+  //    karke ek preview dikhate hain — admin confirm/fix karke save karta hai
+  //    (POST /api/payroll/attendance, jo already exist karta hai). ──
+  app.post('/api/payroll/attendance/preview-sheet', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { spreadsheetId: rawId, tabName } = req.body;
+      if (!(rawId || '').trim()) return res.status(400).json({ error: 'Google Sheet link or ID required' });
+      const spreadsheetId = extractSpreadsheetId(rawId);
+      const tab = (tabName || 'BasicWorkDurationReport').trim() || 'BasicWorkDurationReport';
+
+      let data;
+      try {
+        const sheetsApi = await getSheetsClient(['https://www.googleapis.com/auth/spreadsheets.readonly']);
+        const qTab = /^[A-Za-z0-9_]+$/.test(tab) ? tab : `'${tab.replace(/'/g, "''")}'`;
+        const resp = await sheetsApi.spreadsheets.values.get({ spreadsheetId, range: qTab });
+        data = resp.data.values || [];
+      } catch (e) {
+        return res.status(400).json({ error: `Could not read the sheet — check the ID/tab name and that it's shared with the service account (${e.message || 'unknown error'})` });
+      }
+
+      let parsed;
+      try { parsed = parseWorkDurationReport(data); }
+      catch (e) { return res.status(400).json({ error: e.message }); }
+      if (!parsed.employees.length) return res.status(400).json({ error: 'No employee attendance blocks found in this sheet/tab' });
+
+      // Sheet padh gayi aur employees mil gaye — config yaad rakh lo (agla mahina paste nahi karna padega)
+      await db.query(
+        `INSERT INTO app_settings (key_name,value) VALUES (?,?) ON CONFLICT (key_name) DO UPDATE SET value = EXCLUDED.value`,
+        ['payroll_attendance_sheet', JSON.stringify({ spreadsheetId: rawId, tabName: tab })]);
+
+      const [allUsers] = await db.query(`SELECT id,name,email FROM users WHERE role<>'client' ORDER BY name ASC`);
+      const norm = s => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      const firstWord = s => norm(s).split(' ')[0] || '';
+
+      const rows = parsed.employees.map(emp => {
+        const empNorm = norm(emp.empName), empFirst = firstWord(emp.empName);
+        const exact = allUsers.find(u => norm(u.name) === empNorm);
+        let matchType = 'none', suggestedUserId = null, suggestedUserName = '';
+        if (exact) {
+          matchType = 'exact'; suggestedUserId = exact.id; suggestedUserName = exact.name;
+        } else {
+          const firstMatches = allUsers.filter(u => firstWord(u.name) === empFirst && empFirst);
+          if (firstMatches.length === 1) { matchType = 'guess'; suggestedUserId = firstMatches[0].id; suggestedUserName = firstMatches[0].name; }
+          else if (firstMatches.length > 1) matchType = 'ambiguous';
+        }
+        return { empCode: emp.empCode, empName: emp.empName, presentDays: emp.presentDays, matchType, suggestedUserId, suggestedUserName };
+      });
+
+      res.json({ reportMonth: parsed.reportMonth, rows, users: allUsers });
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
   });
 

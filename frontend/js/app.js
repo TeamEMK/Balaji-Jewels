@@ -997,6 +997,17 @@ async function initPayrollPage() {
     document.getElementById('pyBasis').value = s.perDayBasis || 'fixed30';
     document.getElementById('pyPaidLeave').value = s.paidLeavePerMonth ?? 1;
   }
+  // Attendance sheet config — pichli baar successfully sync hui Sheet ID/tab
+  // yahan pre-fill ho jaati hai (HTML ka default sirf pehli baar/kabhi save
+  // na hui ho tab tak ke liye hai — saved config hamesha usse override karegi)
+  try {
+    const cfg = await api('/api/payroll/attendance-sheet-config');
+    if (cfg && !cfg.error && cfg.spreadsheetId) {
+      const idEl = document.getElementById('pyAttSheetId'), tabEl = document.getElementById('pyAttSheetTab');
+      if (idEl) idEl.value = cfg.spreadsheetId;
+      if (tabEl) tabEl.value = cfg.tabName || 'BasicWorkDurationReport';
+    }
+  } catch (e) {}
 }
 
 async function savePayrollSettings() {
@@ -1081,6 +1092,105 @@ async function uploadAttendanceCSV() {
     generatePayroll(); // turant refresh, taaki naya attendance dikhe
   } finally {
     btn.disabled = false; btn.textContent = '⬆ Upload';
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// ATTENDANCE — Google Sheet se sync ("Basic Work Duration Report" biometric
+// export). Biometric machine me employees sirf FIRST NAME se hote hain
+// ("HARI"), jabki Users list me poora naam hota hai ("Hari Das") — isliye
+// seedha save nahi karte, pehle ek preview dikhate hain jisme admin har
+// employee ka match confirm/fix kar sake, phir hi DB me save hota hai
+// (existing /api/payroll/attendance endpoint reuse karte hain).
+// ══════════════════════════════════════════════════════
+let _attSyncPreview = null; // {reportMonth, rows, users} — last preview-sheet response
+
+async function previewAttendanceSync() {
+  const month = document.getElementById('pyMonth').value;
+  if (!month) { showToast('Pehle month select karo (upar Generate ke paas)', 'error'); return; }
+  const spreadsheetId = document.getElementById('pyAttSheetId').value.trim();
+  const tabName = document.getElementById('pyAttSheetTab').value.trim();
+  if (!spreadsheetId) { showToast('Google Sheet link ya ID daalo', 'error'); return; }
+
+  const btn = document.getElementById('pyAttSyncBtn');
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = '⏳ Reading sheet…';
+  try {
+    const r = await api('/api/payroll/attendance/preview-sheet', 'POST', { spreadsheetId, tabName });
+    if (r.error) { showToast(r.error, 'error'); return; }
+    _attSyncPreview = r;
+    renderAttSyncPreview(month);
+    document.getElementById('attSyncModal').classList.add('open');
+  } finally {
+    btn.disabled = false; btn.textContent = '🔄 Sync Attendance';
+  }
+}
+
+function renderAttSyncPreview(month) {
+  const r = _attSyncPreview;
+  const userOptions = r.users.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
+  const monthWarn = r.reportMonth && r.reportMonth !== month
+    ? `<div style="background:color-mix(in srgb,var(--warning) 10%,transparent);border:1px solid color-mix(in srgb,var(--warning) 25%,transparent);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--warning)">⚠️ This sheet's data looks like <strong>${r.reportMonth}</strong> but you have <strong>${month}</strong> selected above — double check before saving.</div>`
+    : '';
+  document.getElementById('attSyncMeta').innerHTML = `${monthWarn}Saving for month: <strong>${month}</strong> · ${r.rows.length} employee(s) found in the sheet`;
+
+  const dot = { exact: '🟢', guess: '🟡', ambiguous: '🔴', none: '🔴' };
+  document.getElementById('attSyncBody').innerHTML = `
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="text-align:left">
+          <th style="padding:8px 10px;background:var(--muted)">Sheet Name</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:center">Present Days</th>
+          <th style="padding:8px 10px;background:var(--muted)">Matched Employee</th>
+        </tr></thead>
+        <tbody>${r.rows.map((row, i) => `
+          <tr>
+            <td style="padding:8px 10px">${dot[row.matchType]||'🔴'} ${escapeHtml(row.empName)}</td>
+            <td style="padding:8px 10px;text-align:center;font-weight:600">${row.presentDays}</td>
+            <td style="padding:8px 10px">
+              <select id="attSyncSel${i}" data-days="${row.presentDays}" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:var(--card);color:var(--foreground)">
+                <option value="">— Skip —</option>
+                ${userOptions}
+              </select>
+            </td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+  // Suggested match pre-select karo (guess/exact ho to; ambiguous/none khaali "Skip" par rahega)
+  r.rows.forEach((row, i) => {
+    if (row.suggestedUserId) document.getElementById(`attSyncSel${i}`).value = row.suggestedUserId;
+  });
+}
+
+async function confirmAttendanceSync() {
+  const r = _attSyncPreview;
+  if (!r) return;
+  const month = document.getElementById('pyMonth').value;
+  const usersById = {}; r.users.forEach(u => { usersById[u.id] = u; });
+
+  const rows = [];
+  r.rows.forEach((row, i) => {
+    const sel = document.getElementById(`attSyncSel${i}`);
+    const userId = sel.value;
+    if (!userId) return; // Skip
+    const u = usersById[userId];
+    if (!u) return;
+    rows.push({ email: u.email, daysPresent: parseFloat(sel.dataset.days) });
+  });
+  if (!rows.length) { showToast('Har row Skip par hai — kam se kam ek employee match karo', 'error'); return; }
+
+  const btn = document.getElementById('attSyncConfirmBtn');
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = '⏳ Saving…';
+  try {
+    const res = await api('/api/payroll/attendance', 'POST', { month, rows });
+    if (res.error) { showToast(res.error, 'error'); return; }
+    showToast(`✅ ${res.updated} attendance record(s) saved for ${month}!${res.skipped.length ? ` (${res.skipped.length} could not be matched)` : ''}`);
+    closeModal('attSyncModal');
+    _attSyncPreview = null;
+    generatePayroll();
+  } finally {
+    btn.disabled = false; btn.textContent = '✅ Confirm & Save';
   }
 }
 
