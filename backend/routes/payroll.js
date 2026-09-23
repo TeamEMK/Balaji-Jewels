@@ -249,6 +249,34 @@ module.exports = function registerPayrollRoutes(app, ctx) {
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
   });
 
+  // ── Attendance — biometric "Basic Work Duration Report" CSV upload (jab
+  //    Google Sheet ki jagah seedha CSV/Excel export upload karna ho). Bilkul
+  //    wahi format jo preview-sheet Google Sheets se padhta hai, bas yahan
+  //    rows CSV se already-parsed 2D array me aate hain (frontend
+  //    parseCSVRows se — Google Sheets API ka 'values' jaisa hi shape). ──
+  app.post('/api/payroll/attendance/preview-report-csv', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const rawRows = Array.isArray(req.body.rows) ? req.body.rows : [];
+      if (!rawRows.length) return res.status(400).json({ error: 'No rows' });
+
+      let parsed;
+      try { parsed = parseWorkDurationReport(rawRows); }
+      catch (e) { return res.status(400).json({ error: e.message }); }
+      if (!parsed.employees.length) return res.status(400).json({ error: 'No employee attendance blocks found in this file' });
+
+      const [allUsers] = await db.query(`SELECT id,name,email FROM users WHERE role<>'client' ORDER BY name ASC`);
+      const rows = parsed.employees.map(emp => {
+        const m = matchAttendanceEntry({ name: emp.empName }, allUsers);
+        return {
+          empCode: emp.empCode, empName: emp.empName, presentDays: emp.presentDays,
+          matchType: m.matchType, suggestedUserId: m.user ? m.user.id : null, suggestedUserName: m.user ? m.user.name : '',
+        };
+      });
+
+      res.json({ reportMonth: parsed.reportMonth, rows, users: allUsers });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
+  });
+
   // ── Attendance — CSV upload bhi ab isi Confirm preview se guzarta hai
   //    (Google Sheet sync jaisa hi structure — user ki request). CSV me
   //    email column ho to sabse pehle wahi try hota hai (sabse bharosemand),

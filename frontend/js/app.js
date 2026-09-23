@@ -1055,14 +1055,36 @@ async function uploadSalaryCSV() {
   }
 }
 
+// Sample ab wahi "Basic Work Duration Report" biometric format dikhata hai
+// jo Google Sheet me hota hai (2 employees, 5 din ka mini example) — na ki
+// simple email/days_present wala. Isi format ko CSV me export karke seedha
+// upload bhi kiya ja sakta hai (uploadAttendanceCSV auto-detect karta hai).
 function downloadAttendanceSample() {
-  const csv = `email,days_present\npriyanka@test.com,26\npooja@test.com,24.5`;
+  const rows = [
+    ['', 'Monthly Status Report (Basic Work Duration)'],
+    ['', 'Sep 01 2026  To  Sep 05 2026'],
+    ['Company:', '', '', '', 'BJT'],
+    ['Days', '', '1 Tu', '2 W', '3 Th', '4 F', '5 St'],
+    ['Emp. Code:', '', '', '101', '', '', '', '', 'Emp. Name:', '', '', '', '', 'PRIYANKA'],
+    ['Status', '', 'P', 'P', 'P', 'WO', 'P'],
+    ['InTime', '', '09:58', '10:02', '09:55', '', '10:00'],
+    ['OutTime', '', '19:30', '19:20', '19:35', '', '19:15'],
+    ['Total', '', '9:32', '9:18', '9:40', '00:00', '9:15'],
+    ['Emp. Code:', '', '', '102', '', '', '', '', 'Emp. Name:', '', '', '', '', 'POOJA'],
+    ['Status', '', 'P', 'A', 'P', 'WO', 'P'],
+    ['InTime', '', '10:01', '', '10:05', '', '09:58'],
+    ['OutTime', '', '19:12', '', '19:40', '', '19:20'],
+    ['Total', '', '9:11', '00:00', '9:35', '00:00', '9:22'],
+  ];
+  const csv = rows.map(r => r.map(c => /[",\n]/.test(c) ? `"${c.replace(/"/g,'""')}"` : c).join(',')).join('\n');
   downloadFile(csv, 'attendance_sample.csv');
 }
 
 // CSV upload bhi ab Google Sheet sync jaisa hi structure follow karta hai —
 // seedha save nahi karta, pehle wahi Confirm preview (attSyncModal) dikhata
-// hai jisme har row ka match dikh jaaye, tabhi save hota hai.
+// hai jisme har row ka match dikh jaaye, tabhi save hota hai. Do formats
+// auto-detect hote hain: biometric "Basic Work Duration Report" export
+// (Days/Emp. Code: rows), ya simple email/name + days_present sheet.
 async function uploadAttendanceCSV() {
   const month = document.getElementById('pyMonth').value;
   if (!month) { showToast('Pehle month select karo (upar Generate ke paas)', 'error'); return; }
@@ -1074,20 +1096,33 @@ async function uploadAttendanceCSV() {
   try {
     const text = await file.text();
     const dataRows = parseCSVRows(text);
-    const headerCells = dataRows[0].map(h => (h || '').trim().toLowerCase().replace(/\s+/g, '_'));
-    const iEmail = headerCells.indexOf('email');
-    const iName = headerCells.indexOf('name');
-    const iDays = headerCells.findIndex(h => h === 'days_present' || h === 'present' || h === 'days');
-    if (iDays === -1 || (iEmail === -1 && iName === -1)) {
-      showToast('Invalid CSV header. Required: email (or name), days_present', 'error'); return;
+    if (!dataRows.length) { showToast('CSV is empty', 'error'); return; }
+
+    // Biometric report format pehchano — 'Days' ya 'Emp. Code:' pehle column me kahin bhi ho
+    const looksLikeReport = dataRows.some(r => {
+      const c0 = (r[0] || '').trim();
+      return c0 === 'Days' || c0 === 'Emp. Code:';
+    });
+
+    let r;
+    if (looksLikeReport) {
+      r = await api('/api/payroll/attendance/preview-report-csv', 'POST', { rows: dataRows });
+    } else {
+      const headerCells = dataRows[0].map(h => (h || '').trim().toLowerCase().replace(/\s+/g, '_'));
+      const iEmail = headerCells.indexOf('email');
+      const iName = headerCells.indexOf('name');
+      const iDays = headerCells.findIndex(h => h === 'days_present' || h === 'present' || h === 'days');
+      if (iDays === -1 || (iEmail === -1 && iName === -1)) {
+        showToast('Invalid CSV header. Required: email (or name), days_present', 'error'); return;
+      }
+      const simpleRows = dataRows.slice(1).filter(rr => rr.some(f => (f || '').trim())).map(rr => ({
+        email: iEmail !== -1 ? (rr[iEmail] || '').trim() : '',
+        name: iName !== -1 ? (rr[iName] || '').trim() : '',
+        daysPresent: (rr[iDays] || '').trim(),
+      }));
+      if (!simpleRows.length) { showToast('CSV is empty', 'error'); return; }
+      r = await api('/api/payroll/attendance/preview-csv', 'POST', { rows: simpleRows });
     }
-    const rows = dataRows.slice(1).filter(r => r.some(f => (f || '').trim())).map(r => ({
-      email: iEmail !== -1 ? (r[iEmail] || '').trim() : '',
-      name: iName !== -1 ? (r[iName] || '').trim() : '',
-      daysPresent: (r[iDays] || '').trim(),
-    }));
-    if (!rows.length) { showToast('CSV is empty', 'error'); return; }
-    const r = await api('/api/payroll/attendance/preview-csv', 'POST', { rows });
     if (r.error) { showToast(r.error, 'error'); return; }
     if (r.invalidCount) showToast(`⚠️ ${r.invalidCount} row(s) skipped — missing/invalid days_present or email/name`, 'error');
     _attSyncPreview = r;
