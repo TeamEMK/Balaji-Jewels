@@ -353,6 +353,7 @@ async function init() {
     if (!isPageDisabled('leaves')) loadLeaveBadge();
     if (!isPageDisabled('leaves')) loadMyLeaveDecidedBadge(); // apni approve/reject hui leave — email na aaye to bhi yahan dikh jaye
     if (!isPageDisabled('query'))  loadQueryBadge();
+    if (!isPageDisabled('help-tickets')) loadHelpTicketBadge();
     if (!isPageDisabled('fms-tasks')) startFmsPendingReminders(); // login par + har 2 ghante FMS pending pop-up (doers ko)
     // Refresh badges every 30 seconds
     setInterval(loadApprovalBadge, 30000);
@@ -360,6 +361,7 @@ async function init() {
     if (!isPageDisabled('leaves')) setInterval(loadLeaveBadge, 30000);
     if (!isPageDisabled('leaves')) setInterval(loadMyLeaveDecidedBadge, 30000);
     if (!isPageDisabled('query'))  setInterval(loadQueryBadge, 30000);
+    if (!isPageDisabled('help-tickets')) setInterval(loadHelpTicketBadge, 30000);
   } catch(e) { console.error('Init error:', e); window.location.replace('/'); }
 }
 
@@ -428,7 +430,7 @@ function setMinDates() {
 // ══════════════════════════════════════════════════════
 // NAVIGATION
 // ══════════════════════════════════════════════════════
-const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',payments:'Payments',query:'Query',users:'Users',profile:'Profile',mis:'MIS Report',score360:'360° Score',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client'};
+const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',payments:'Payments',query:'Query','help-tickets':'Help Ticket',users:'Users',profile:'Profile',mis:'MIS Report',score360:'360° Score',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client'};
 
 // Sidebar par cursor jaate hi (jab wo expand hone lagta hai) koi bhi khula dropdown
 // band kar do — warna native select popup sidebar ke upar overlap dikhta hai.
@@ -453,6 +455,7 @@ const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Dai
 const DISABLED_PAGES = {
   'leaves':    false, // Leave
   'query':     true,  // Query
+  'help-tickets': false, // Help Ticket
   // FMS ko Google service account chahiye (GOOGLE_CREDENTIALS_B64). Wo set na ho
   // to kuch tootta nahi — sheet wali API saaf error deti hai, list khaali aati
   // hai, aur regular users ko tab dikhta hi nahi (koi doer hi nahi hota).
@@ -475,7 +478,7 @@ function isTaskActionDisabled(a) { return DISABLED_TASK_ACTIONS[a] === true; }
 
 // Har page ka sidebar nav item — disabled pages ko hide karne ke liye
 const PAGE_NAV_ID = {
-  'leaves': 'nav-leaves', 'query': 'nav-query', 'fms': 'nav-fms', 'fms-tasks': 'nav-fms-tasks',
+  'leaves': 'nav-leaves', 'query': 'nav-query', 'help-tickets': 'nav-help-tickets', 'fms': 'nav-fms', 'fms-tasks': 'nav-fms-tasks',
 };
 
 function navigate(page, el) {
@@ -517,6 +520,7 @@ function navigate(page, el) {
   if (page==='payroll') initPayrollPage();
   if (page==='payments') initPaymentsPage();
   if (page==='query') loadQueries();
+  if (page==='help-tickets') loadHelpTickets();
   if (page==='records') loadRecords();
   // navigate() core app ka hissa hai, yaani client ki copy me bhi jaata hai —
   // par ncLoadLog generator ke markers ke andar hai aur wahan hota hi nahi.
@@ -1904,6 +1908,201 @@ async function rejectQuery() {
   closeModal('resolveQueryModal');
   showToast('Query rejected');
   loadQueries();
+}
+
+// ══════════════════════════════════════════════════════
+// HELP TICKET — Query jaisa hi pattern, bas "kisse help chahiye" (target
+// person) optional hai. Admin hamesha SAARI tickets dekhta hai; target diya
+// ho to wo person bhi dekh/resolve kar sakta hai — target na ho to sirf
+// raiser + Admin ko dikhti hai.
+// ══════════════════════════════════════════════════════
+let _helpTickets = [];
+let _htIsAdmin = false;
+let _htUsers = []; // target dropdown ke liye — role<>'client'
+
+// User ke liye "seen" tracking — resolved tickets jo dekh li, badge se hata do
+function _htSeen() { try { return new Set(JSON.parse(localStorage.getItem('htSeen_' + ME.id) || '[]')); } catch(e) { return new Set(); } }
+function _htMarkSeen(ids) {
+  try {
+    const s = _htSeen(); ids.forEach(i => s.add(i));
+    localStorage.setItem('htSeen_' + ME.id, JSON.stringify([...s]));
+  } catch(e) {}
+}
+
+function _htStatusBadge(st) {
+  if (st === 'resolved') return `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:color-mix(in srgb,var(--success) 22%,transparent);color:var(--success);border:1px solid color-mix(in srgb,var(--success) 22%,transparent)">✓ Resolved</span>`;
+  return `<span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:color-mix(in srgb,var(--warning) 12%,transparent);color:var(--warning);border:1px solid color-mix(in srgb,var(--warning) 26%,transparent)">● Open</span>`;
+}
+
+// Sidebar badge — Admin: total open count (sab dikhta hai); baaki: unhe
+// target kiye gaye open tickets (unka action chahiye) + apni raised tickets
+// jo resolve ho chuki par abhi dekhi nahi
+async function loadHelpTicketBadge() {
+  const badge = document.getElementById('helpTicketBadge');
+  if (!badge || !ME) return;
+  try {
+    const data = await api('/api/help-tickets');
+    const list = data.tickets || [];
+    let n;
+    if (data.isAdmin) n = list.filter(t => t.status === 'open').length;
+    else {
+      const seen = _htSeen();
+      const needsMe = list.filter(t => t.status === 'open' && String(t.target_user_id) === String(ME.id)).length;
+      const unseenResolved = list.filter(t => t.isOwner && t.status === 'resolved' && !seen.has(t.id)).length;
+      n = needsMe + unseenResolved;
+    }
+    if (n > 0) { badge.textContent = n; badge.style.display = 'flex'; }
+    else badge.style.display = 'none';
+  } catch(e) {}
+}
+
+async function loadHelpTickets() {
+  const box = document.getElementById('helpTicketContent');
+  const info = document.getElementById('helpTicketInfo');
+  box.innerHTML = '<div style="padding:20px;color:var(--muted-foreground);font-size:13px;text-align:center">Loading…</div>';
+  const [data, users] = await Promise.all([api('/api/help-tickets'), api('/api/users')]);
+  if (data.error) { box.innerHTML = `<div style="padding:20px;color:var(--destructive)">${escapeHtml(data.error)}</div>`; return; }
+  _helpTickets = data.tickets || [];
+  _htIsAdmin = !!data.isAdmin;
+  _htUsers = Array.isArray(users) ? users.filter(u => u.role !== 'client' && u.id !== ME.id) : [];
+
+  info.textContent = _htIsAdmin
+    ? 'You see every help ticket in the company. Tickets that name someone specific are also visible to that person, who can resolve them too.'
+    : 'Raise a ticket for anything you need help with. Optionally name who you need help from — they\'ll see it too. Admin always sees every ticket.';
+
+  if (!_helpTickets.length) {
+    box.innerHTML = '<div style="padding:30px;color:var(--muted-foreground);font-size:13px;text-align:center">No help tickets yet.</div>';
+  } else {
+    box.innerHTML = _helpTickets.map(_renderHtCard).join('');
+    // apni resolved tickets ab dekh li — seen mark karke badge clear
+    _htMarkSeen(_helpTickets.filter(t => t.isOwner && t.status === 'resolved').map(t => t.id));
+  }
+  loadHelpTicketBadge();
+}
+
+function _renderHtCard(t) {
+  let resolvedBlock = '';
+  if (t.status === 'resolved') {
+    resolvedBlock = `<div style="margin-top:8px;background:color-mix(in srgb,var(--success) 10%,transparent);border:1px solid color-mix(in srgb,var(--success) 22%,transparent);border-radius:8px;padding:8px 10px">
+      <div style="font-size:11px;font-weight:700;color:var(--success);margin-bottom:3px">Resolved${t.resolverName ? ' · by ' + escapeHtml(t.resolverName) : ''}${t.resolved_at ? ' · ' + escapeHtml(t.resolved_at) : ''}</div>
+      <div style="font-size:13px;color:var(--foreground);white-space:pre-wrap;line-height:1.5">${t.response ? escapeHtml(t.response) : '<span style="color:var(--muted-foreground)">(no note)</span>'}</div>
+    </div>`;
+  }
+  const canEdit = t.isOwner && t.status === 'open';
+  const canDelete = _htIsAdmin || (t.isOwner && t.status === 'open');
+  const targetChip = t.target_user_id
+    ? `<span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:8px;background:color-mix(in srgb,var(--chart-1) 12%,transparent);color:var(--chart-1)">🙋 For: ${escapeHtml(t.targetName || '—')}</span>`
+    : `<span style="font-size:10px;color:var(--muted-foreground)">🙋 Anyone / Admin</span>`;
+  return `<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--card)">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-weight:600;font-size:13px;color:var(--foreground)">${escapeHtml(t.userName)}${t.isOwner?' <span style="font-size:10px;color:var(--muted-foreground);font-weight:400">(you)</span>':''}</span>
+        ${staffTypeBadge(t.staff_type)}
+        <span style="font-size:11px;color:var(--muted-foreground)">🕒 ${escapeHtml(t.created_at || '')}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        ${_htStatusBadge(t.status)}
+        ${canEdit ? `<button title="Edit ticket" onclick="openEditHelpTicket(${t.id})" style="background:none;border:none;cursor:pointer;color:var(--chart-1);font-size:14px;padding:2px 4px;line-height:1">✏️</button>` : ''}
+        ${canDelete ? `<button title="Delete ticket" onclick="deleteHelpTicket(${t.id})" style="background:none;border:none;cursor:pointer;color:var(--destructive);font-size:14px;padding:2px 4px;line-height:1">🗑</button>` : ''}
+      </div>
+    </div>
+    <div style="margin-bottom:6px">${targetChip}</div>
+    <div style="font-size:14px;color:var(--foreground);white-space:pre-wrap;line-height:1.5">${escapeHtml(t.message)}</div>
+    ${resolvedBlock}
+    ${t.canResolve ? `<div style="margin-top:10px;text-align:right"><button class="btn btn-primary btn-sm" onclick="openResolveHelpTicket(${t.id})">✅ Resolve</button></div>` : ''}
+  </div>`;
+}
+
+async function deleteHelpTicket(id) {
+  if (!await confirmDialog('Delete this help ticket permanently? This cannot be undone.', { title: 'Delete Ticket', okText: 'Delete', danger: true })) return;
+  const r = await api(`/api/help-tickets/${id}`, 'DELETE');
+  if (r.error) { showToast(r.error, 'error'); return; }
+  showToast('Help ticket deleted');
+  loadHelpTickets();
+}
+
+function _htTargetOptionsHtml(selected) {
+  const opts = _htUsers.map(u => `<option value="${u.id}" ${String(u.id)===String(selected)?'selected':''}>${escapeHtml(u.name)}${u.department?' — '+escapeHtml(u.department):''}</option>`).join('');
+  return `<option value="">— Anyone / Admin —</option>${opts}`;
+}
+
+// ── New / Edit ticket ──
+let _editHtId = null; // null = naya; warna is ticket ko edit kar rahe hain
+async function openNewHelpTicket() {
+  _editHtId = null;
+  document.getElementById('newHtTitle').textContent = '🆘 New Help Ticket';
+  document.getElementById('sendHtBtn').textContent = 'Send Ticket';
+  document.getElementById('newHtErr').style.display = 'none';
+  document.getElementById('htMessage').value = '';
+  if (!_htUsers.length) { const users = await api('/api/users'); _htUsers = Array.isArray(users) ? users.filter(u => u.role !== 'client' && u.id !== ME.id) : []; }
+  document.getElementById('htTarget').innerHTML = _htTargetOptionsHtml('');
+  document.getElementById('newHelpTicketModal').classList.add('open');
+  setTimeout(() => document.getElementById('htMessage').focus(), 50);
+}
+
+function openEditHelpTicket(id) {
+  const t = _helpTickets.find(x => x.id === id);
+  if (!t) return;
+  if (t.status !== 'open') { showToast('Resolved tickets cannot be edited', 'error'); return; }
+  _editHtId = id;
+  document.getElementById('newHtTitle').textContent = '✏️ Edit Help Ticket';
+  document.getElementById('sendHtBtn').textContent = 'Save Changes';
+  document.getElementById('newHtErr').style.display = 'none';
+  document.getElementById('htMessage').value = t.message || '';
+  document.getElementById('htTarget').innerHTML = _htTargetOptionsHtml(t.target_user_id || '');
+  document.getElementById('newHelpTicketModal').classList.add('open');
+  setTimeout(() => document.getElementById('htMessage').focus(), 50);
+}
+
+let _htSubmitting = false;
+async function submitHelpTicket() {
+  if (_htSubmitting) return;
+  const err = document.getElementById('newHtErr');
+  const message = document.getElementById('htMessage').value.trim();
+  const targetUserId = document.getElementById('htTarget').value || null;
+  if (!message) { err.textContent = 'Please describe what help you need.'; err.style.display = 'block'; return; }
+  const isEdit = !!_editHtId;
+  const btn = document.getElementById('sendHtBtn');
+  _htSubmitting = true;
+  if (btn) { btn.disabled = true; btn.textContent = isEdit ? 'Saving…' : 'Sending…'; }
+  try {
+    const r = isEdit
+      ? await api(`/api/help-tickets/${_editHtId}`, 'PUT', { message, targetUserId })
+      : await api('/api/help-tickets', 'POST', { message, targetUserId });
+    if (r.error) { err.textContent = r.error; err.style.display = 'block'; return; }
+    closeModal('newHelpTicketModal');
+    showToast(isEdit ? '✅ Ticket updated!' : '✅ Help ticket sent!');
+    _editHtId = null;
+    if (document.getElementById('page-help-tickets').classList.contains('active')) loadHelpTickets();
+    else loadHelpTicketBadge();
+  } finally {
+    _htSubmitting = false;
+    if (btn) { btn.disabled = false; btn.textContent = isEdit ? 'Save Changes' : 'Send Ticket'; }
+  }
+}
+
+// ── Resolve (Admin ya target person) ──
+let _resolveHtId = null;
+function openResolveHelpTicket(id) {
+  const t = _helpTickets.find(x => x.id === id);
+  if (!t) return;
+  _resolveHtId = id;
+  document.getElementById('resolveHtErr').style.display = 'none';
+  document.getElementById('rhtUser').textContent = t.userName || '';
+  document.getElementById('rhtTime').textContent = t.created_at || '';
+  document.getElementById('rhtMessage').textContent = t.message || '';
+  document.getElementById('rhtResponse').value = '';
+  document.getElementById('resolveHtModal').classList.add('open');
+  setTimeout(() => document.getElementById('rhtResponse').focus(), 50);
+}
+
+async function resolveHelpTicket() {
+  const response = document.getElementById('rhtResponse').value.trim();
+  const r = await api(`/api/help-tickets/${_resolveHtId}/resolve`, 'PUT', { response });
+  if (r.error) { document.getElementById('resolveHtErr').textContent = r.error; document.getElementById('resolveHtErr').style.display = 'block'; return; }
+  closeModal('resolveHtModal');
+  showToast('✅ Marked resolved!');
+  loadHelpTickets();
 }
 
 // ══════════════════════════════════════════════════════

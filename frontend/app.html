@@ -86,6 +86,11 @@
       <span class="nav-label-text">Query</span>
       <span id="queryBadge" style="display:none;position:absolute;top:6px;right:8px;background:var(--destructive);color:#fff;border-radius:50%;width:16px;height:16px;font-size:10px;font-weight:700;align-items:center;justify-content:center">0</span>
     </div>
+    <div class="nav-item" id="nav-help-tickets" onclick="navigate('help-tickets',this)" style="position:relative">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke-width="2"/><circle cx="12" cy="12" r="4" stroke-width="2"/><path stroke-linecap="round" stroke-width="2" d="M4.93 4.93l3.4 3.4M19.07 4.93l-3.4 3.4M4.93 19.07l3.4-3.4M19.07 19.07l-3.4-3.4"/></svg>
+      <span class="nav-label-text">Help Ticket</span>
+      <span id="helpTicketBadge" style="display:none;position:absolute;top:6px;right:8px;background:var(--destructive);color:#fff;border-radius:50%;width:16px;height:16px;font-size:10px;font-weight:700;align-items:center;justify-content:center">0</span>
+    </div>
     <div class="nav-item" id="nav-users" style="display:none" onclick="navigate('users',this)">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
       <span class="nav-label-text">Users</span>
@@ -879,6 +884,20 @@
     </div>
     <div id="queryInfo" style="background:var(--muted);border:1px solid color-mix(in srgb,var(--chart-1) 22%,transparent);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:var(--chart-1)"></div>
     <div id="queryContent"></div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       HELP TICKET — koi bhi raise kar sakta hai; "kisse help chahiye"
+       (target person) optional hai. Admin hamesha sab dekhta hai; target
+       person diya ho to wo bhi dekh/resolve kar sakta hai.
+  ══════════════════════════════════════ -->
+  <div id="page-help-tickets" class="page">
+    <div class="page-header">
+      <div></div>
+      <button class="btn btn-primary" onclick="openNewHelpTicket()">+ New Help Ticket</button>
+    </div>
+    <div id="helpTicketInfo" style="background:var(--muted);border:1px solid color-mix(in srgb,var(--chart-1) 22%,transparent);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:var(--chart-1)"></div>
+    <div id="helpTicketContent"></div>
   </div>
 
   <!-- ══════════════════════════════════════
@@ -2203,6 +2222,50 @@
       <button class="btn btn-outline" onclick="closeModal('resolveQueryModal')">Cancel</button>
       <button class="btn btn-outline btn-sm" style="border-color:var(--destructive);color:var(--destructive)" onclick="rejectQuery()">✗ Reject</button>
       <button class="btn btn-primary btn-sm" onclick="answerQuery()">✓ Send Answer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ NEW / EDIT HELP TICKET (koi bhi user) ══ -->
+<div class="modal-overlay" id="newHelpTicketModal">
+  <div class="modal" style="max-width:520px">
+    <h3 id="newHtTitle">🆘 New Help Ticket</h3>
+    <div class="alert error" id="newHtErr"></div>
+    <div class="form-group">
+      <label>Kisse help chahiye? <span style="color:var(--muted-foreground);font-weight:400">(optional)</span></label>
+      <select id="htTarget"><option value="">— Anyone / Admin —</option></select>
+    </div>
+    <div class="form-group">
+      <label>What do you need help with?</label>
+      <textarea id="htMessage" rows="5" maxlength="5000" placeholder="Describe what you need help with…"
+        style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;resize:vertical"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+      <button class="btn btn-outline" onclick="closeModal('newHelpTicketModal')">Cancel</button>
+      <button id="sendHtBtn" class="btn btn-primary btn-sm" onclick="submitHelpTicket()">Send Ticket</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ RESOLVE HELP TICKET (Admin ya target person) ══ -->
+<div class="modal-overlay" id="resolveHtModal">
+  <div class="modal" style="max-width:560px">
+    <h3>✅ Resolve Help Ticket</h3>
+    <div class="alert error" id="resolveHtErr"></div>
+    <div style="background:var(--muted);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:12px">
+      <div style="font-size:11px;font-weight:700;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">
+        <span id="rhtUser"></span> · <span id="rhtTime" style="color:var(--muted-foreground)"></span>
+      </div>
+      <div id="rhtMessage" style="font-size:13px;color:var(--foreground);white-space:pre-wrap;line-height:1.5"></div>
+    </div>
+    <div class="form-group">
+      <label>Response <span style="color:var(--muted-foreground);font-weight:400">(optional)</span></label>
+      <textarea id="rhtResponse" rows="4" maxlength="5000" placeholder="How did you help / what was done…"
+        style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;resize:vertical"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+      <button class="btn btn-outline" onclick="closeModal('resolveHtModal')">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="resolveHelpTicket()">✓ Mark Resolved</button>
     </div>
   </div>
 </div>

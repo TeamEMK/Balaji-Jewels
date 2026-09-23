@@ -2075,6 +2075,7 @@ app.post('/api/tasks/checklist-bulk-edit', requireAuth, requireAdmin, async (req
 });
 
 require('./routes/queries')(app, ROUTE_CTX);
+require('./routes/help-tickets')(app, ROUTE_CTX);
 
 // ══════════════════════════════════════════════════════
 // APPROVALS
