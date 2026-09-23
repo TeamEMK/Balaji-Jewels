@@ -1463,16 +1463,83 @@ function pmtDrillCustomer(clientId) {
   pmtLoadLedger();
 }
 
+// FMS ke business client names ('role=client' login users se seedha nahi
+// milte — jaise "NEMICHAND", "SHREEJI JEWELS") ko pehle padh ke Confirm
+// screen dikhate hain (Payroll attendance sync jaisa hi pattern) — admin har
+// naam ko existing client se map kare, naya bana le, ya skip kare, tabhi
+// bills save hote hain.
+let _pmtFmsPreview = null; // {rows, clientNames, users, skippedSheets}
+
 async function pmtSyncFromFms() {
   const btn = document.getElementById('pmtSyncFmsBtn');
   if (btn.disabled) return;
-  btn.disabled = true; btn.textContent = '⏳ Syncing…';
+  btn.disabled = true; btn.textContent = '⏳ Reading FMS…';
   try {
-    const r = await api('/api/payments/bills/sync-fms', 'POST');
+    const r = await api('/api/payments/bills/preview-fms', 'POST');
     if (r.error) { showToast(r.error, 'error'); return; }
-    showToast(`✅ ${r.imported} bill(s) imported from FMS${r.skippedSheets.length ? ` (${r.skippedSheets.length} sheet(s) have no billing columns)` : ''}${r.skippedNoClient ? ` · ${r.skippedNoClient} row(s) skipped — client not found` : ''}`);
-    pmtGenerate();
+    _pmtFmsPreview = r;
+    renderPmtFmsPreview();
+    document.getElementById('pmtFmsConfirmModal').classList.add('open');
   } finally { btn.disabled = false; btn.textContent = '🔄 Sync from FMS'; }
+}
+
+function renderPmtFmsPreview() {
+  const r = _pmtFmsPreview;
+  const unmatched = r.clientNames.filter(c => c.matchType === 'none').length;
+  document.getElementById('pmtFmsMeta').innerHTML =
+    `${r.rows.length} billable row(s) found across ${r.clientNames.length} client name(s)${unmatched ? ` · <strong style="color:var(--warning)">${unmatched} need${unmatched===1?'s':''} your input</strong>` : ''}${r.skippedSheets.length ? ` · ${r.skippedSheets.length} sheet(s) skipped (no billing columns)` : ''}`;
+
+  const userOptions = r.users.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
+  document.getElementById('pmtFmsBody').innerHTML = `
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="text-align:left">
+          <th style="padding:8px 10px;background:var(--muted)">Client Name (in FMS)</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:center">Bills</th>
+          <th style="padding:8px 10px;background:var(--muted)">Action</th>
+        </tr></thead>
+        <tbody>${r.clientNames.map((c, i) => `
+          <tr>
+            <td style="padding:8px 10px">${c.matchType==='exact'?'🟢':'🔴'} ${escapeHtml(c.name)}</td>
+            <td style="padding:8px 10px;text-align:center;font-weight:600">${c.count}</td>
+            <td style="padding:8px 10px">
+              <select id="pmtFmsSel${i}" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:var(--card);color:var(--foreground)">
+                <option value="skip">— Skip (don't import) —</option>
+                <option value="create">+ Create new client account "${escapeHtml(c.name)}"</option>
+                <optgroup label="Map to existing client">${userOptions}</optgroup>
+              </select>
+            </td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+  // Suggested match pre-select karo (exact ho to; warna default 'skip' par rahega)
+  r.clientNames.forEach((c, i) => {
+    if (c.suggestedUserId) document.getElementById(`pmtFmsSel${i}`).value = c.suggestedUserId;
+  });
+}
+
+async function confirmFmsSync() {
+  const r = _pmtFmsPreview;
+  if (!r) return;
+  const mapping = {};
+  r.clientNames.forEach((c, i) => {
+    const val = document.getElementById(`pmtFmsSel${i}`).value;
+    if (val === 'skip') mapping[c.key] = { action: 'skip' };
+    else if (val === 'create') mapping[c.key] = { action: 'create' };
+    else mapping[c.key] = { action: 'existing', userId: parseInt(val, 10) };
+  });
+
+  const btn = document.getElementById('pmtFmsConfirmBtn');
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = '⏳ Importing…';
+  try {
+    const res = await api('/api/payments/bills/confirm-fms', 'POST', { rows: r.rows, mapping });
+    if (res.error) { showToast(res.error, 'error'); return; }
+    showToast(`✅ ${res.imported} bill(s) imported!${res.createdClients ? ` ${res.createdClients} new client account(s) created.` : ''}${res.skipped ? ` (${res.skipped} row(s) skipped)` : ''}`);
+    closeModal('pmtFmsConfirmModal');
+    _pmtFmsPreview = null;
+    pmtGenerate();
+  } finally { btn.disabled = false; btn.textContent = '✅ Confirm & Import Bills'; }
 }
 
 // ── Client Payment Terms modal ──

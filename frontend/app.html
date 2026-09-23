@@ -2492,6 +2492,24 @@
   </div>
 </div>
 
+<!-- ══════════════════════════════════════
+     FMS BILLING SYNC PREVIEW — jo client names FMS sheet me hain unhe
+     existing 'Client (Catalog only)' account se map/naya banao/skip karo,
+     DB me save hone se pehle confirm karne ke liye
+══════════════════════════════════════ -->
+<div class="modal-overlay" id="pmtFmsConfirmModal">
+  <div class="modal" style="max-width:720px">
+    <h3>🔄 Sync from FMS — Confirm Clients</h3>
+    <div id="pmtFmsMeta" style="font-size:12px;color:var(--muted-foreground);margin-bottom:12px"></div>
+    <div style="font-size:11px;color:var(--muted-foreground);margin-bottom:10px">🟢 existing client se exact match mila &nbsp; 🔴 koi login account nahi — existing se map karo, naya banao, ya Skip karo</div>
+    <div id="pmtFmsBody" style="max-height:50vh;overflow:auto">Loading…</div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn btn-outline" onclick="closeModal('pmtFmsConfirmModal')">Cancel</button>
+      <button class="btn btn-primary" id="pmtFmsConfirmBtn" onclick="confirmFmsSync()">✅ Confirm &amp; Import Bills</button>
+    </div>
+  </div>
+</div>
+
 <script src="/js/app.js"></script>
 </body>
 </html>

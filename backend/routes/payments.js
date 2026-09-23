@@ -12,6 +12,8 @@
 //
 // Sirf admin dekh/badal sakta hai — financial data hai.
 
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const { getSheetsClient, extractSpreadsheetId } = require('../lib/google');
 const { parsePlanCellDate } = require('../lib/sheet-cols');
 
@@ -88,19 +90,26 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
   });
 
-  // ── Bill — FMS se sync. Best-effort: har FMS sheet ke headers me Client
-  // Name + Gold/Diamond amount + Bill date jaise naam wale columns dhoondta
-  // hai (kisi bhi spacing/case ke saath). Sheet me ye columns na hon to us
-  // sheet ko chhod deta hai (error nahi) — sabhi FMS sheets billing ke liye
-  // nahi bani hoti. fms_ref se dobara sync par duplicate nahi bante. ──
-  app.post('/api/payments/bills/sync-fms', requireAuth, requireAdmin, async (req, res) => {
+  // ── Bill — FMS se PREVIEW (Confirm screen ke liye, kuch save nahi karta).
+  // Best-effort: har FMS sheet ke headers me Client Name + Gold/Diamond
+  // amount + Bill date jaise naam wale columns dhoondta hai (kisi bhi
+  // spacing/case ke saath). Sheet me ye columns na hon to us sheet ko chhod
+  // deta hai (error nahi) — sabhi FMS sheets billing ke liye nahi bani hoti.
+  //
+  // Client name 'role=client' users se EXACT match hona chahiye — real FMS
+  // sheets me business client names (jaise "NEMICHAND") hote hain jinke liye
+  // login account ho hi na, isliye seedha save karne ki jagah pehle ek
+  // Confirm screen dikhate hain: admin har unmatched naam ko existing client
+  // se map kare, naya bana le, ya skip kare. ──
+  app.post('/api/payments/bills/preview-fms', requireAuth, requireAdmin, async (req, res) => {
     try {
       const [sheets] = await db.query('SELECT * FROM fms_sheets ORDER BY fms_name ASC');
-      const [clientUsers] = await db.query(`SELECT id, name FROM users WHERE role='client'`);
+      const [clientUsers] = await db.query(`SELECT id, name FROM users WHERE role='client' ORDER BY name ASC`);
       const clientByName = {};
-      clientUsers.forEach(c => { clientByName[c.name.trim().toLowerCase()] = c.id; });
+      clientUsers.forEach(c => { clientByName[c.name.trim().toLowerCase()] = c; });
 
-      let imported = 0, skippedSheets = [], skippedNoClient = 0;
+      const rows = []; // {clientName, billNo, billDate, gold, diamond, fmsRef}
+      const skippedSheets = [];
       if (sheets.length) {
         const sheetsApi = await getSheetsClient(['https://www.googleapis.com/auth/spreadsheets.readonly']);
         for (const sheet of sheets) {
@@ -124,8 +133,6 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
               const row = data[i];
               const clientName = (row[iClient] || '').toString().trim();
               if (!clientName) continue;
-              const clientId = clientByName[clientName.toLowerCase()];
-              if (!clientId) { skippedNoClient++; continue; }
               const billDateRaw = (row[iDate] || '').toString().trim();
               if (!billDateRaw) continue;
               const { planDate } = parsePlanCellDate(billDateRaw);
@@ -133,18 +140,80 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
               const gold = iGold >= 0 ? parseFloat((row[iGold] || '0').toString().replace(/[^0-9.-]/g, '')) || 0 : 0;
               const diamond = iDiamond >= 0 ? parseFloat((row[iDiamond] || '0').toString().replace(/[^0-9.-]/g, '')) || 0 : 0;
               if (gold <= 0 && diamond <= 0) continue;
-              const fmsRef = `${sheet.id}:${tabName}:${i + 1}`;
               const billNo = iBillNo >= 0 ? (row[iBillNo] || '').toString().trim() : '';
-              const [result] = await db.query(
-                `INSERT INTO client_bills (client_user_id,bill_no,bill_date,gold_amount,diamond_amount,source,fms_ref,created_by)
-                 VALUES (?,?,?,?,?,'fms',?,?) ON CONFLICT (fms_ref) DO NOTHING`,
-                [clientId, billNo, planDate, gold, diamond, fmsRef, req.session.userId]);
-              if (result.affectedRows) imported++;
+              rows.push({ clientName, billNo, billDate: planDate, gold, diamond, fmsRef: `${sheet.id}:${tabName}:${i + 1}` });
             }
           } catch (e) { skippedSheets.push(sheet.fms_name || sheet.sheet_name); }
         }
       }
-      res.json({ imported, skippedSheets, skippedNoClient });
+
+      if (!rows.length) return res.status(400).json({ error: 'No billable rows found in any FMS sheet (need Client Name + Bill Date + Gold/Diamond amount columns)' });
+
+      // Unique client names — exact match status ke saath, taaki Confirm
+      // screen sirf naam-wise dikhaye (row-wise nahi, sainkdon rows ho sakti hain)
+      const byName = new Map();
+      for (const r of rows) {
+        const key = r.clientName.trim().toLowerCase();
+        if (!byName.has(key)) byName.set(key, { name: r.clientName, count: 0 });
+        byName.get(key).count++;
+      }
+      const clientNames = [...byName.entries()].map(([key, v]) => {
+        const match = clientByName[key];
+        return { key, name: v.name, count: v.count, matchType: match ? 'exact' : 'none', suggestedUserId: match ? match.id : null, suggestedUserName: match ? match.name : '' };
+      }).sort((a, b) => a.name.localeCompare(b.name));
+
+      res.json({ rows, clientNames, users: clientUsers, skippedSheets });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
+  });
+
+  // ── Bill — FMS Confirm screen se save. Har unique client name ka mapping
+  // ({action:'skip'} | {action:'existing',userId} | {action:'create'})
+  // frontend se aata hai (preview-fms wale rows ke saath, dobara Google
+  // Sheets se padhna nahi padta). fms_ref se dobara sync par duplicate nahi
+  // bante. ──
+  app.post('/api/payments/bills/confirm-fms', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const rows = Array.isArray(req.body.rows) ? req.body.rows : [];
+      const mapping = req.body.mapping && typeof req.body.mapping === 'object' ? req.body.mapping : {};
+      if (!rows.length) return res.status(400).json({ error: 'No rows to import' });
+
+      // 'create' wale naye client (Catalog-only) accounts pehle bana lo —
+      // random password (koi use nahi karega, bill track karne ke liye account
+      // bas chahiye), unique email placeholder domain par.
+      const clientIdByKey = {};
+      let createdClients = 0;
+      for (const [key, m] of Object.entries(mapping)) {
+        if (!m || m.action === 'skip') continue;
+        if (m.action === 'existing' && m.userId) { clientIdByKey[key] = parseInt(m.userId, 10); continue; }
+        if (m.action === 'create') {
+          const sampleRow = rows.find(r => (r.clientName || '').trim().toLowerCase() === key);
+          const displayName = (sampleRow && sampleRow.clientName) || key;
+          const slug = displayName.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') || 'client';
+          let email = `${slug}@fms-client.local`;
+          const [exists] = await db.query('SELECT id FROM users WHERE LOWER(email)=LOWER(?)', [email]);
+          if (exists.length) email = `${slug}.${crypto.randomBytes(3).toString('hex')}@fms-client.local`;
+          const randomPassword = crypto.randomBytes(16).toString('hex');
+          const [ins] = await db.query(
+            `INSERT INTO users (name,email,password,role,staff_type) VALUES (?,?,?,?,?)`,
+            [displayName, email, bcrypt.hashSync(randomPassword, 10), 'client', 'office']);
+          clientIdByKey[key] = ins.insertId;
+          createdClients++;
+        }
+      }
+
+      let imported = 0, skipped = 0;
+      for (const r of rows) {
+        const key = (r.clientName || '').trim().toLowerCase();
+        const clientId = clientIdByKey[key];
+        if (!clientId) { skipped++; continue; }
+        const [result] = await db.query(
+          `INSERT INTO client_bills (client_user_id,bill_no,bill_date,gold_amount,diamond_amount,source,fms_ref,created_by)
+           VALUES (?,?,?,?,?,'fms',?,?) ON CONFLICT (fms_ref) DO NOTHING`,
+          [clientId, r.billNo || '', r.billDate, r.gold || 0, r.diamond || 0, r.fmsRef, req.session.userId]);
+        if (result.affectedRows) imported++;
+      }
+
+      res.json({ imported, skipped, createdClients });
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
   });
 
