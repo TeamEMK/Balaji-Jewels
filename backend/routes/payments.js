@@ -17,6 +17,15 @@ const bcrypt = require('bcryptjs');
 const { getSheetsClient, extractSpreadsheetId } = require('../lib/google');
 const { parsePlanCellDate } = require('../lib/sheet-cols');
 
+// Client naam ka farak — 2 dialects ke saath consistent honi chahiye (preview
+// aur confirm dono ek hi key use karte hain, warna mapping match hi nahi hogi).
+// _normName: sirf whitespace ka farak nazarandaz karta hai ("Shreeji Jewels"
+// == "SHREEJI  JEWELS") — dedup ke liye. _fuzzyKey: punctuation bhi hata deta
+// hai ("Shreeji Jewels." == "SHREEJI JEWELS") — sirf guess-matching ke liye,
+// dedup ke liye NAHI (do alag naam galti se ek na ban jaayein).
+const _normName = s => (s || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
+const _fuzzyKey = s => _normName(s).replace(/[^a-z0-9]+/g, '');
+
 module.exports = function registerPaymentsRoutes(app, ctx) {
   const { db, requireAuth, requireAdmin } = ctx;
 
@@ -106,7 +115,17 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
       const [sheets] = await db.query('SELECT * FROM fms_sheets ORDER BY fms_name ASC');
       const [clientUsers] = await db.query(`SELECT id, name FROM users WHERE role='client' ORDER BY name ASC`);
       const clientByName = {};
-      clientUsers.forEach(c => { clientByName[c.name.trim().toLowerCase()] = c; });
+      const fuzzyGroups = {};
+      clientUsers.forEach(c => {
+        clientByName[_normName(c.name)] = c;
+        const fk = _fuzzyKey(c.name);
+        if (fk) (fuzzyGroups[fk] = fuzzyGroups[fk] || []).push(c);
+      });
+      // Punctuation/spacing farak nazarandaz karke guess ("Shreeji Jewels."
+      // == "SHREEJI  JEWELS") — sirf tab jab fuzzy key par EK hi client ho,
+      // 2 alag clients clash karein to guess mat karo (ambiguous).
+      const clientByFuzzy = {};
+      Object.entries(fuzzyGroups).forEach(([fk, arr]) => { if (arr.length === 1) clientByFuzzy[fk] = arr[0]; });
 
       const rows = []; // {clientName, billNo, billDate, gold, diamond, fmsRef}
       const skippedSheets = [];
@@ -150,16 +169,25 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
       if (!rows.length) return res.status(400).json({ error: 'No billable rows found in any FMS sheet (need Client Name + Bill Date + Gold/Diamond amount columns)' });
 
       // Unique client names — exact match status ke saath, taaki Confirm
-      // screen sirf naam-wise dikhaye (row-wise nahi, sainkdon rows ho sakti hain)
+      // screen sirf naam-wise dikhaye (row-wise nahi, sainkdon rows ho sakti
+      // hain). _normName() whitespace ka farak nazarandaz karta hai — isi wajah
+      // se pehle "SHREEJI JEWELS" aur "SHREEJI  JEWELS" (double space) alag-alag
+      // row ban jaate the, ab ek hi row me aayenge.
       const byName = new Map();
       for (const r of rows) {
-        const key = r.clientName.trim().toLowerCase();
+        const key = _normName(r.clientName);
         if (!byName.has(key)) byName.set(key, { name: r.clientName, count: 0 });
         byName.get(key).count++;
       }
       const clientNames = [...byName.entries()].map(([key, v]) => {
-        const match = clientByName[key];
-        return { key, name: v.name, count: v.count, matchType: match ? 'exact' : 'none', suggestedUserId: match ? match.id : null, suggestedUserName: match ? match.name : '' };
+        const exact = clientByName[key];
+        const fuzzy = !exact ? clientByFuzzy[_fuzzyKey(v.name)] : null;
+        const match = exact || fuzzy;
+        return {
+          key, name: v.name, count: v.count,
+          matchType: exact ? 'exact' : fuzzy ? 'guess' : 'none',
+          suggestedUserId: match ? match.id : null, suggestedUserName: match ? match.name : '',
+        };
       }).sort((a, b) => a.name.localeCompare(b.name));
 
       res.json({ rows, clientNames, users: clientUsers, skippedSheets });
@@ -186,7 +214,7 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
         if (!m || m.action === 'skip') continue;
         if (m.action === 'existing' && m.userId) { clientIdByKey[key] = parseInt(m.userId, 10); continue; }
         if (m.action === 'create') {
-          const sampleRow = rows.find(r => (r.clientName || '').trim().toLowerCase() === key);
+          const sampleRow = rows.find(r => _normName(r.clientName) === key);
           const displayName = (sampleRow && sampleRow.clientName) || key;
           const slug = displayName.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') || 'client';
           let email = `${slug}@fms-client.local`;
@@ -203,7 +231,7 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
 
       let imported = 0, skipped = 0;
       for (const r of rows) {
-        const key = (r.clientName || '').trim().toLowerCase();
+        const key = _normName(r.clientName);
         const clientId = clientIdByKey[key];
         if (!clientId) { skipped++; continue; }
         const [result] = await db.query(

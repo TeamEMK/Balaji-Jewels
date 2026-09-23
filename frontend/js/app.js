@@ -1486,11 +1486,25 @@ async function pmtSyncFromFms() {
 function renderPmtFmsPreview() {
   const r = _pmtFmsPreview;
   const unmatched = r.clientNames.filter(c => c.matchType === 'none').length;
+  const guessed = r.clientNames.filter(c => c.matchType === 'guess').length;
   document.getElementById('pmtFmsMeta').innerHTML =
-    `${r.rows.length} billable row(s) found across ${r.clientNames.length} client name(s)${unmatched ? ` · <strong style="color:var(--warning)">${unmatched} need${unmatched===1?'s':''} your input</strong>` : ''}${r.skippedSheets.length ? ` · ${r.skippedSheets.length} sheet(s) skipped (no billing columns)` : ''}`;
+    `${r.rows.length} billable row(s) found across ${r.clientNames.length} client name(s)${guessed ? ` · <strong style="color:var(--chart-1)">${guessed} auto-guessed</strong> (check before confirming)` : ''}${unmatched ? ` · <strong style="color:var(--warning)">${unmatched} need${unmatched===1?'s':''} your input</strong>` : ''}${r.skippedSheets.length ? ` · ${r.skippedSheets.length} sheet(s) skipped (no billing columns)` : ''}`;
 
-  const userOptions = r.users.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
+  // Dropdown ek hi baar banao, har row me reuse — flat list (optgroup nahi,
+  // kuch browsers me tap se dikkat karta hai). "Skip"/"Create" upar, phir
+  // ek disabled separator line, phir saare existing clients.
+  const userOptionsHtml = `<option disabled>────── Map to existing client ──────</option>` +
+    r.users.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
+  const optionsFor = (c) => `
+    <option value="skip">— Skip (don't import) —</option>
+    <option value="create">+ Create new client account "${escapeHtml(c.name)}"</option>
+    ${userOptionsHtml}`;
+
   document.getElementById('pmtFmsBody').innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;padding:10px;background:var(--muted);border-radius:8px">
+      <button class="btn btn-outline btn-sm" onclick="pmtFmsBulkAction('create')">🪄 Create accounts for all unmatched</button>
+      <button class="btn btn-outline btn-sm" onclick="pmtFmsBulkAction('skip')">⏭ Skip all unmatched</button>
+    </div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead><tr style="text-align:left">
@@ -1500,22 +1514,35 @@ function renderPmtFmsPreview() {
         </tr></thead>
         <tbody>${r.clientNames.map((c, i) => `
           <tr>
-            <td style="padding:8px 10px">${c.matchType==='exact'?'🟢':'🔴'} ${escapeHtml(c.name)}</td>
+            <td style="padding:8px 10px">${c.matchType==='exact'?'🟢':c.matchType==='guess'?'🟡':'🔴'} ${escapeHtml(c.name)}${c.matchType==='guess'?`<div style="font-size:10px;color:var(--muted-foreground)">guessed: ${escapeHtml(c.suggestedUserName)}</div>`:''}</td>
             <td style="padding:8px 10px;text-align:center;font-weight:600">${c.count}</td>
             <td style="padding:8px 10px">
-              <select id="pmtFmsSel${i}" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:var(--card);color:var(--foreground)">
-                <option value="skip">— Skip (don't import) —</option>
-                <option value="create">+ Create new client account "${escapeHtml(c.name)}"</option>
-                <optgroup label="Map to existing client">${userOptions}</optgroup>
+              <select id="pmtFmsSel${i}" data-matchtype="${c.matchType}" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:var(--card);color:var(--foreground)">
+                ${optionsFor(c)}
               </select>
             </td>
           </tr>`).join('')}</tbody>
       </table>
     </div>`;
-  // Suggested match pre-select karo (exact ho to; warna default 'skip' par rahega)
+  // Suggested match pre-select karo (exact/guess ho to; warna default 'skip' par rahega)
   r.clientNames.forEach((c, i) => {
     if (c.suggestedUserId) document.getElementById(`pmtFmsSel${i}`).value = c.suggestedUserId;
   });
+}
+
+// Ek click me saare 🔴 unmatched rows par ek hi action laga do — 1-by-1
+// select karne se bachne ke liye. Already matched (exact/guess) rows ko
+// chhedta nahi.
+function pmtFmsBulkAction(action) {
+  const r = _pmtFmsPreview;
+  if (!r) return;
+  let count = 0;
+  r.clientNames.forEach((c, i) => {
+    if (c.matchType !== 'none') return; // sirf unmatched par bulk lagao
+    const sel = document.getElementById(`pmtFmsSel${i}`);
+    if (sel) { sel.value = action; count++; }
+  });
+  showToast(count ? `${count} row(s) set to "${action === 'create' ? 'Create new account' : 'Skip'}"` : 'No unmatched rows to update');
 }
 
 async function confirmFmsSync() {
