@@ -90,6 +90,28 @@ function parseWorkDurationReport(rows) {
   return { reportMonth, employees };
 }
 
+// Attendance sync — chahe Google Sheet se aaye ya CSV se, dono ek hi tarah
+// match hote hain: email exact > name exact > first-name guess > kuch nahi
+// (ambiguous/none) — taaki dono jagah ek hi Confirm modal reuse ho sake aur
+// matching logic ek hi jagah rahe.
+function matchAttendanceEntry(entry, users) {
+  const norm = s => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const firstWord = s => norm(s).split(' ')[0] || '';
+  if (entry.email) {
+    const byEmail = users.find(u => norm(u.email) === norm(entry.email));
+    if (byEmail) return { matchType: 'exact', user: byEmail };
+  }
+  if (entry.name) {
+    const byName = users.find(u => norm(u.name) === norm(entry.name));
+    if (byName) return { matchType: 'exact', user: byName };
+    const empFirst = firstWord(entry.name);
+    const firstMatches = users.filter(u => firstWord(u.name) === empFirst && empFirst);
+    if (firstMatches.length === 1) return { matchType: 'guess', user: firstMatches[0] };
+    if (firstMatches.length > 1) return { matchType: 'ambiguous', user: null };
+  }
+  return { matchType: 'none', user: null };
+}
+
 module.exports = function registerPayrollRoutes(app, ctx) {
   const { db, requireAuth, requireAdmin } = ctx;
 
@@ -215,24 +237,49 @@ module.exports = function registerPayrollRoutes(app, ctx) {
         ['payroll_attendance_sheet', JSON.stringify({ spreadsheetId: rawId, tabName: tab })]);
 
       const [allUsers] = await db.query(`SELECT id,name,email FROM users WHERE role<>'client' ORDER BY name ASC`);
-      const norm = s => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
-      const firstWord = s => norm(s).split(' ')[0] || '';
-
       const rows = parsed.employees.map(emp => {
-        const empNorm = norm(emp.empName), empFirst = firstWord(emp.empName);
-        const exact = allUsers.find(u => norm(u.name) === empNorm);
-        let matchType = 'none', suggestedUserId = null, suggestedUserName = '';
-        if (exact) {
-          matchType = 'exact'; suggestedUserId = exact.id; suggestedUserName = exact.name;
-        } else {
-          const firstMatches = allUsers.filter(u => firstWord(u.name) === empFirst && empFirst);
-          if (firstMatches.length === 1) { matchType = 'guess'; suggestedUserId = firstMatches[0].id; suggestedUserName = firstMatches[0].name; }
-          else if (firstMatches.length > 1) matchType = 'ambiguous';
-        }
-        return { empCode: emp.empCode, empName: emp.empName, presentDays: emp.presentDays, matchType, suggestedUserId, suggestedUserName };
+        const m = matchAttendanceEntry({ name: emp.empName }, allUsers);
+        return {
+          empCode: emp.empCode, empName: emp.empName, presentDays: emp.presentDays,
+          matchType: m.matchType, suggestedUserId: m.user ? m.user.id : null, suggestedUserName: m.user ? m.user.name : '',
+        };
       });
 
       res.json({ reportMonth: parsed.reportMonth, rows, users: allUsers });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
+  });
+
+  // ── Attendance — CSV upload bhi ab isi Confirm preview se guzarta hai
+  //    (Google Sheet sync jaisa hi structure — user ki request). CSV me
+  //    email column ho to sabse pehle wahi try hota hai (sabse bharosemand),
+  //    warna name (exact, phir first-name guess). Kuch save NAHI hota yahan —
+  //    sirf match dikhata hai, save Confirm par POST /api/payroll/attendance
+  //    se hi hota hai (wahi endpoint jo pehle se hai). ──
+  app.post('/api/payroll/attendance/preview-csv', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const rawRows = Array.isArray(req.body.rows) ? req.body.rows : [];
+      if (!rawRows.length) return res.status(400).json({ error: 'No rows' });
+
+      const entries = []; let invalidCount = 0;
+      for (const r of rawRows) {
+        const daysPresent = parseFloat(r.daysPresent);
+        if (isNaN(daysPresent) || daysPresent < 0) { invalidCount++; continue; }
+        const email = (r.email || '').trim(), name = (r.name || '').trim();
+        if (!email && !name) { invalidCount++; continue; }
+        entries.push({ email, name, daysPresent: Math.round(daysPresent * 10) / 10 });
+      }
+      if (!entries.length) return res.status(400).json({ error: 'No valid rows found — check email/name and days_present columns' });
+
+      const [allUsers] = await db.query(`SELECT id,name,email FROM users WHERE role<>'client' ORDER BY name ASC`);
+      const rows = entries.map(e => {
+        const m = matchAttendanceEntry(e, allUsers);
+        return {
+          empCode: '', empName: e.name || e.email, presentDays: e.daysPresent,
+          matchType: m.matchType, suggestedUserId: m.user ? m.user.id : null, suggestedUserName: m.user ? m.user.name : '',
+        };
+      });
+
+      res.json({ reportMonth: null, rows, users: allUsers, invalidCount });
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
   });
 

@@ -1060,6 +1060,9 @@ function downloadAttendanceSample() {
   downloadFile(csv, 'attendance_sample.csv');
 }
 
+// CSV upload bhi ab Google Sheet sync jaisa hi structure follow karta hai —
+// seedha save nahi karta, pehle wahi Confirm preview (attSyncModal) dikhata
+// hai jisme har row ka match dikh jaaye, tabhi save hota hai.
 async function uploadAttendanceCSV() {
   const month = document.getElementById('pyMonth').value;
   if (!month) { showToast('Pehle month select karo (upar Generate ke paas)', 'error'); return; }
@@ -1067,7 +1070,7 @@ async function uploadAttendanceCSV() {
   if (!file) { showToast('Please select a CSV file', 'error'); return; }
   const btn = document.getElementById('pyAttUploadBtn');
   if (btn.disabled) return;
-  btn.disabled = true; btn.textContent = '⏳ Uploading…';
+  btn.disabled = true; btn.textContent = '⏳ Reading CSV…';
   try {
     const text = await file.text();
     const dataRows = parseCSVRows(text);
@@ -1084,12 +1087,13 @@ async function uploadAttendanceCSV() {
       daysPresent: (r[iDays] || '').trim(),
     }));
     if (!rows.length) { showToast('CSV is empty', 'error'); return; }
-    const r = await api('/api/payroll/attendance', 'POST', { month, rows });
+    const r = await api('/api/payroll/attendance/preview-csv', 'POST', { rows });
     if (r.error) { showToast(r.error, 'error'); return; }
-    showToast(`✅ ${r.updated} attendance records saved for ${month}!${r.skipped.length ? ` (${r.skipped.length} skipped)` : ''}`);
-    if (r.skipped.length) console.warn('Attendance upload skipped:', r.skipped);
+    if (r.invalidCount) showToast(`⚠️ ${r.invalidCount} row(s) skipped — missing/invalid days_present or email/name`, 'error');
+    _attSyncPreview = r;
+    renderAttSyncPreview(month);
+    document.getElementById('attSyncModal').classList.add('open');
     document.getElementById('pyAttFile').value = '';
-    generatePayroll(); // turant refresh, taaki naya attendance dikhe
   } finally {
     btn.disabled = false; btn.textContent = '⬆ Upload';
   }
@@ -1132,14 +1136,14 @@ function renderAttSyncPreview(month) {
   const monthWarn = r.reportMonth && r.reportMonth !== month
     ? `<div style="background:color-mix(in srgb,var(--warning) 10%,transparent);border:1px solid color-mix(in srgb,var(--warning) 25%,transparent);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--warning)">⚠️ This sheet's data looks like <strong>${r.reportMonth}</strong> but you have <strong>${month}</strong> selected above — double check before saving.</div>`
     : '';
-  document.getElementById('attSyncMeta').innerHTML = `${monthWarn}Saving for month: <strong>${month}</strong> · ${r.rows.length} employee(s) found in the sheet`;
+  document.getElementById('attSyncMeta').innerHTML = `${monthWarn}Saving for month: <strong>${month}</strong> · ${r.rows.length} employee(s) found`;
 
   const dot = { exact: '🟢', guess: '🟡', ambiguous: '🔴', none: '🔴' };
   document.getElementById('attSyncBody').innerHTML = `
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead><tr style="text-align:left">
-          <th style="padding:8px 10px;background:var(--muted)">Sheet Name</th>
+          <th style="padding:8px 10px;background:var(--muted)">Name (source)</th>
           <th style="padding:8px 10px;background:var(--muted);text-align:center">Present Days</th>
           <th style="padding:8px 10px;background:var(--muted)">Matched Employee</th>
         </tr></thead>
