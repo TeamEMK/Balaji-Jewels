@@ -997,17 +997,6 @@ async function initPayrollPage() {
     document.getElementById('pyBasis').value = s.perDayBasis || 'fixed30';
     document.getElementById('pyPaidLeave').value = s.paidLeavePerMonth ?? 1;
   }
-  // Attendance sheet config — pichli baar successfully sync hui Sheet ID/tab
-  // yahan pre-fill ho jaati hai (HTML ka default sirf pehli baar/kabhi save
-  // na hui ho tab tak ke liye hai — saved config hamesha usse override karegi)
-  try {
-    const cfg = await api('/api/payroll/attendance-sheet-config');
-    if (cfg && !cfg.error && cfg.spreadsheetId) {
-      const idEl = document.getElementById('pyAttSheetId'), tabEl = document.getElementById('pyAttSheetTab');
-      if (idEl) idEl.value = cfg.spreadsheetId;
-      if (tabEl) tabEl.value = cfg.tabName || 'BasicWorkDurationReport';
-    }
-  } catch (e) {}
 }
 
 async function savePayrollSettings() {
@@ -1135,41 +1124,21 @@ async function uploadAttendanceCSV() {
 }
 
 // ══════════════════════════════════════════════════════
-// ATTENDANCE — Google Sheet se sync ("Basic Work Duration Report" biometric
-// export). Biometric machine me employees sirf FIRST NAME se hote hain
-// ("HARI"), jabki Users list me poora naam hota hai ("Hari Das") — isliye
-// seedha save nahi karte, pehle ek preview dikhate hain jisme admin har
-// employee ka match confirm/fix kar sake, phir hi DB me save hota hai
-// (existing /api/payroll/attendance endpoint reuse karte hain).
+// ATTENDANCE — CSV upload (biometric "Basic Work Duration Report" export ya
+// simple email/name+days_present, dono auto-detect hote hain uploadAttendanceCSV
+// me) ke baad ka Confirm preview. Biometric machine me employees sirf FIRST
+// NAME se hote hain ("HARI"), jabki Users list me poora naam hota hai ("Hari
+// Das") — isliye seedha save nahi karte, pehle ek preview dikhate hain jisme
+// admin har employee ka match confirm/fix kar sake, phir hi DB me save hota
+// hai (existing /api/payroll/attendance endpoint reuse karte hain).
 // ══════════════════════════════════════════════════════
-let _attSyncPreview = null; // {reportMonth, rows, users} — last preview-sheet response
-
-async function previewAttendanceSync() {
-  const month = document.getElementById('pyMonth').value;
-  if (!month) { showToast('Pehle month select karo (upar Generate ke paas)', 'error'); return; }
-  const spreadsheetId = document.getElementById('pyAttSheetId').value.trim();
-  const tabName = document.getElementById('pyAttSheetTab').value.trim();
-  if (!spreadsheetId) { showToast('Google Sheet link ya ID daalo', 'error'); return; }
-
-  const btn = document.getElementById('pyAttSyncBtn');
-  if (btn.disabled) return;
-  btn.disabled = true; btn.textContent = '⏳ Reading sheet…';
-  try {
-    const r = await api('/api/payroll/attendance/preview-sheet', 'POST', { spreadsheetId, tabName });
-    if (r.error) { showToast(r.error, 'error'); return; }
-    _attSyncPreview = r;
-    renderAttSyncPreview(month);
-    document.getElementById('attSyncModal').classList.add('open');
-  } finally {
-    btn.disabled = false; btn.textContent = '🔄 Sync Attendance';
-  }
-}
+let _attSyncPreview = null; // {reportMonth, rows, users} — last preview response (sheet ya CSV)
 
 function renderAttSyncPreview(month) {
   const r = _attSyncPreview;
   const userOptions = r.users.map(u => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
   const monthWarn = r.reportMonth && r.reportMonth !== month
-    ? `<div style="background:color-mix(in srgb,var(--warning) 10%,transparent);border:1px solid color-mix(in srgb,var(--warning) 25%,transparent);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--warning)">⚠️ This sheet's data looks like <strong>${r.reportMonth}</strong> but you have <strong>${month}</strong> selected above — double check before saving.</div>`
+    ? `<div style="background:color-mix(in srgb,var(--warning) 10%,transparent);border:1px solid color-mix(in srgb,var(--warning) 25%,transparent);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--warning)">⚠️ This file's data looks like <strong>${r.reportMonth}</strong> but you have <strong>${month}</strong> selected above — double check before saving.</div>`
     : '';
   document.getElementById('attSyncMeta').innerHTML = `${monthWarn}Saving for month: <strong>${month}</strong> · ${r.rows.length} employee(s) found`;
 

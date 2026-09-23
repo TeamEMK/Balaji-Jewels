@@ -19,7 +19,6 @@
 // Sirf admin dekh/badal sakta hai — salary sensitive data hai.
 
 const { workingDaysInMonth } = require('../lib/workdays');
-const { getSheetsClient, extractSpreadsheetId } = require('../lib/google');
 
 const DEFAULT_POLICY = { perDayBasis: 'fixed30', paidLeavePerMonth: 1 };
 
@@ -191,69 +190,11 @@ module.exports = function registerPayrollRoutes(app, ctx) {
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
   });
 
-  // ── Attendance sheet config — spreadsheet ID + tab yaad rakhte hain taaki
-  //    admin ko har mahine dobara paste na karna pade ──
-  app.get('/api/payroll/attendance-sheet-config', requireAuth, requireAdmin, async (req, res) => {
-    try {
-      const [rows] = await db.query('SELECT value FROM app_settings WHERE key_name=?', ['payroll_attendance_sheet']);
-      if (!rows[0]) return res.json({ spreadsheetId: '', tabName: 'BasicWorkDurationReport' });
-      try { res.json(JSON.parse(rows[0].value)); }
-      catch (e) { res.json({ spreadsheetId: '', tabName: 'BasicWorkDurationReport' }); }
-    } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
-  });
-
-  // ── Attendance — biometric "Basic Work Duration Report" Google Sheet se
-  //    preview. Sirf padhta hai, DB me kuch likhta nahi — kyunki biometric
-  //    machine me employees sirf FIRST NAME se hote hain ("HARI", "POOJA"),
-  //    jabki Users list me poora naam hota hai ("Hari Das", "Pooja Dubey").
-  //    Exact match zyada logon ke liye fail hoga, isliye first-name se guess
-  //    karke ek preview dikhate hain — admin confirm/fix karke save karta hai
-  //    (POST /api/payroll/attendance, jo already exist karta hai). ──
-  app.post('/api/payroll/attendance/preview-sheet', requireAuth, requireAdmin, async (req, res) => {
-    try {
-      const { spreadsheetId: rawId, tabName } = req.body;
-      if (!(rawId || '').trim()) return res.status(400).json({ error: 'Google Sheet link or ID required' });
-      const spreadsheetId = extractSpreadsheetId(rawId);
-      const tab = (tabName || 'BasicWorkDurationReport').trim() || 'BasicWorkDurationReport';
-
-      let data;
-      try {
-        const sheetsApi = await getSheetsClient(['https://www.googleapis.com/auth/spreadsheets.readonly']);
-        const qTab = /^[A-Za-z0-9_]+$/.test(tab) ? tab : `'${tab.replace(/'/g, "''")}'`;
-        const resp = await sheetsApi.spreadsheets.values.get({ spreadsheetId, range: qTab });
-        data = resp.data.values || [];
-      } catch (e) {
-        return res.status(400).json({ error: `Could not read the sheet — check the ID/tab name and that it's shared with the service account (${e.message || 'unknown error'})` });
-      }
-
-      let parsed;
-      try { parsed = parseWorkDurationReport(data); }
-      catch (e) { return res.status(400).json({ error: e.message }); }
-      if (!parsed.employees.length) return res.status(400).json({ error: 'No employee attendance blocks found in this sheet/tab' });
-
-      // Sheet padh gayi aur employees mil gaye — config yaad rakh lo (agla mahina paste nahi karna padega)
-      await db.query(
-        `INSERT INTO app_settings (key_name,value) VALUES (?,?) ON CONFLICT (key_name) DO UPDATE SET value = EXCLUDED.value`,
-        ['payroll_attendance_sheet', JSON.stringify({ spreadsheetId: rawId, tabName: tab })]);
-
-      const [allUsers] = await db.query(`SELECT id,name,email FROM users WHERE role<>'client' ORDER BY name ASC`);
-      const rows = parsed.employees.map(emp => {
-        const m = matchAttendanceEntry({ name: emp.empName }, allUsers);
-        return {
-          empCode: emp.empCode, empName: emp.empName, presentDays: emp.presentDays,
-          matchType: m.matchType, suggestedUserId: m.user ? m.user.id : null, suggestedUserName: m.user ? m.user.name : '',
-        };
-      });
-
-      res.json({ reportMonth: parsed.reportMonth, rows, users: allUsers });
-    } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
-  });
-
   // ── Attendance — biometric "Basic Work Duration Report" CSV upload (jab
-  //    Google Sheet ki jagah seedha CSV/Excel export upload karna ho). Bilkul
-  //    wahi format jo preview-sheet Google Sheets se padhta hai, bas yahan
-  //    rows CSV se already-parsed 2D array me aate hain (frontend
-  //    parseCSVRows se — Google Sheets API ka 'values' jaisa hi shape). ──
+  //    biometric software seedha CSV/Excel export deta hai). Frontend
+  //    (uploadAttendanceCSV) CSV ko 2D array me parse karke yahan bhejta hai
+  //    (parseCSVRows se), phir wahi parseWorkDurationReport() + naam-matching
+  //    (matchAttendanceEntry) jo niche simple email/name CSV ke liye bhi use hoti hai. ──
   app.post('/api/payroll/attendance/preview-report-csv', requireAuth, requireAdmin, async (req, res) => {
     try {
       const rawRows = Array.isArray(req.body.rows) ? req.body.rows : [];

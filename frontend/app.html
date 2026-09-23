@@ -796,22 +796,6 @@
           <button class="btn btn-outline btn-sm" onclick="downloadAttendanceSample()">⬇ Sample</button>
         </div>
         <div style="font-size:11px;color:var(--muted-foreground);margin-top:6px">Upload either your biometric machine's <strong>"Basic Work Duration Report"</strong> export (see Sample) or a simple <strong>email/name, days_present</strong> CSV — both are auto-detected. You'll get a Confirm screen to check the matches before anything is saved, for the month selected below.</div>
-
-        <div style="display:flex;align-items:center;gap:10px;margin:14px 0 10px">
-          <div style="flex:1;height:1px;background:var(--border)"></div>
-          <span style="font-size:11px;color:var(--muted-foreground);font-weight:600">OR SYNC FROM GOOGLE SHEET</span>
-          <div style="flex:1;height:1px;background:var(--border)"></div>
-        </div>
-        <div class="form-group" style="margin-bottom:8px">
-          <label style="font-size:11px">Spreadsheet Link or ID</label>
-          <input type="text" id="pyAttSheetId" placeholder="Paste the Google Sheet link or ID" value="1smKv5P6tXoueLLycZkPuMDlgwL-8tuWWspgABF6Z61g"/>
-        </div>
-        <div class="form-group" style="margin-bottom:8px">
-          <label style="font-size:11px">Tab Name</label>
-          <input type="text" id="pyAttSheetTab" placeholder="BasicWorkDurationReport" value="BasicWorkDurationReport"/>
-        </div>
-        <button class="btn btn-green btn-sm" id="pyAttSyncBtn" onclick="previewAttendanceSync()">🔄 Sync Attendance</button>
-        <div style="font-size:11px;color:var(--muted-foreground);margin-top:6px">Biometric "Basic Work Duration Report" export — reads Present/Half-day per employee for the month selected below. Employees are matched by name to a preview list you confirm before anything is saved.</div>
       </div>
     </div>
 
