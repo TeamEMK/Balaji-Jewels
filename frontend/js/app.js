@@ -3794,7 +3794,8 @@ async function openDelegate() {
   document.getElementById('dDate').min=today;
   document.getElementById('dDate').disabled=false;
   const users = await api(withSeg('/api/users'));  // current view (office/factory) ke doers hi
-  const opts = users.map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
+  // Client (Catalog only) role ko task delegate nahi hoti — sirf employees dikhao
+  const opts = users.filter(u => u.role !== 'client').map(u=>`<option value="${u.id}">${u.name}</option>`).join('');
   document.getElementById('dDoer').innerHTML='<option value="">Select Doer</option>'+opts;
   document.getElementById('delegateModal').classList.add('open');
 }
@@ -4163,7 +4164,7 @@ async function uploadCSV() {
     const text = await file.text();
     const rows = parseCSVRows(text).slice(1).filter(r => r.some(f => (f||'').trim()));
     if (!rows.length) { showToast('CSV is empty','error'); return; }
-    const allUsers = await api('/api/users');
+    const allUsers = (await api('/api/users')).filter(u => u.role !== 'client'); // client ko delegation task nahi
     const dateOrder = resolveDateOrder(rows.map(r => (r[2]||'').trim()));
     let count = 0, skipped = 0;
     const skipReasons = [];
@@ -4271,23 +4272,37 @@ async function uploadCSVC() {
 // USERS
 // ══════════════════════════════════════════════════════
 let allUsersData = [];
+// Employees aur Clients ek saath list me mix nahi honi chahiye — alag tabs,
+// default Employees khulta hai. Client role = 'Client (Catalog only)' login.
+let _usersTypeTab = 'employee';
 
 async function loadUsers() {
   allUsersData = await api(withSeg('/api/users'));
-  renderUsersTable(allUsersData);
+  filterUsers();
+}
+
+function switchUsersTab(type, el) {
+  _usersTypeTab = type;
+  document.querySelectorAll('#usersTypeTabGroup .tab').forEach(t => t.classList.remove('active'));
+  if (el) el.classList.add('active');
+  filterUsers();
 }
 
 function filterUsers() {
   const q = (document.getElementById('userSearch')?.value||'').toLowerCase().trim();
-  if (!q) { renderUsersTable(allUsersData); return; }
-  const filtered = allUsersData.filter(u =>
-    (u.name||'').toLowerCase().includes(q) ||
-    (u.email||'').toLowerCase().includes(q) ||
-    (u.department||'').toLowerCase().includes(q) ||
-    (u.role||'').toLowerCase().includes(q) ||
-    (u.phone||'').includes(q)
-  );
-  renderUsersTable(filtered);
+  let list = _usersTypeTab === 'client'
+    ? allUsersData.filter(u => u.role === 'client')
+    : allUsersData.filter(u => u.role !== 'client');
+  if (q) {
+    list = list.filter(u =>
+      (u.name||'').toLowerCase().includes(q) ||
+      (u.email||'').toLowerCase().includes(q) ||
+      (u.department||'').toLowerCase().includes(q) ||
+      (u.role||'').toLowerCase().includes(q) ||
+      (u.phone||'').includes(q)
+    );
+  }
+  renderUsersTable(list);
 }
 
 // Map to store full user data for safe edit access (avoids inline special-char bugs)
@@ -4467,7 +4482,7 @@ async function saveNewDepartment() {
 function openAddUser() {
   document.getElementById('userModalTitle').textContent='Add User';
   ['editUserId','uName','uEmail','uNotifEmail','uPhone','uPassword'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('uRole').value='user';
+  document.getElementById('uRole').value = _usersTypeTab === 'client' ? 'client' : 'user'; // active tab ke hisaab se pre-select
   setUserViewOnly(false); // naya user by default full access
   document.getElementById('pwdOptional').style.display='none';
   document.getElementById('bulkUserSection').style.display=''; // CSV upload sirf yahan

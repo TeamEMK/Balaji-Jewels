@@ -351,7 +351,10 @@
   <!-- ── USERS ── -->
   <div id="page-users" class="page">
     <div class="page-header">
-      <div></div>
+      <div class="tab-group" id="usersTypeTabGroup">
+        <div class="tab active" id="usersTabEmployee" onclick="switchUsersTab('employee',this)">👤 Employees</div>
+        <div class="tab" id="usersTabClient" onclick="switchUsersTab('client',this)">🛍 Clients</div>
+      </div>
       <div style="display:flex;align-items:center;gap:10px">
         <div style="position:relative">
           <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted-foreground)">🔍</span>
