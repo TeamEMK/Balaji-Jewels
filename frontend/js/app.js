@@ -1369,17 +1369,41 @@ async function pmtLoadOverview() {
     </div>`;
 }
 
+// Ek client select ho to Bills aur Gold Ledger (weight-based, Fix/Unfix) ke
+// beech sub-tab dikhta hai — dono alag cheez hain (₹ bill vs gold weight).
+let _pmtLedgerView = 'bills';
+
+function pmtLedgerSubTabsHtml(clientId) {
+  if (!clientId) return '';
+  return `<div class="tab-group" style="margin-bottom:14px">
+    <div class="tab ${_pmtLedgerView==='bills'?'active':''}" onclick="pmtSwitchLedgerView('bills')">📋 Bills</div>
+    <div class="tab ${_pmtLedgerView==='gold'?'active':''}" onclick="pmtSwitchLedgerView('gold')">⚖️ Gold Ledger</div>
+  </div>`;
+}
+
+function pmtSwitchLedgerView(view) {
+  _pmtLedgerView = view;
+  pmtLoadLedger();
+}
+
 async function pmtLoadLedger() {
   const box = document.getElementById('pmtResults');
-  box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Loading…</div>`;
   const clientId = document.getElementById('pmtClientFilter').value;
+  const subTabs = pmtLedgerSubTabsHtml(clientId);
+
+  if (clientId && _pmtLedgerView === 'gold') {
+    box.innerHTML = subTabs + `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Loading…</div>`;
+    return pmtLoadGoldLedger(clientId, subTabs);
+  }
+
+  box.innerHTML = subTabs + `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">Loading…</div>`;
   const start = document.getElementById('pmtStart').value, end = document.getElementById('pmtEnd').value;
   let qs = [];
   if (clientId) qs.push(`clientId=${clientId}`);
   if (start && end) qs.push(`start=${start}&end=${end}`);
   const rows = await api('/api/payments/bills' + (qs.length ? '?' + qs.join('&') : ''));
-  if (rows.error) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${escapeHtml(rows.error)}</div>`; return; }
-  if (!rows.length) { box.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">No bills found</div>`; return; }
+  if (rows.error) { box.innerHTML = subTabs + `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${escapeHtml(rows.error)}</div>`; return; }
+  if (!rows.length) { box.innerHTML = subTabs + `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">No bills found</div>`; return; }
   const due = rows.filter(r => (r.goldIsDue || r.diamondIsDue));
   const notDue = rows.filter(r => !(r.goldIsDue || r.diamondIsDue) && (r.goldPending > 0 || r.diamondPending > 0));
   const paid = rows.filter(r => r.goldPending <= 0 && r.diamondPending <= 0);
@@ -1402,7 +1426,7 @@ async function pmtLoadLedger() {
         <tbody>${list.map(pmtRow).join('')}</tbody>
       </table>
     </div>`;
-  box.innerHTML =
+  box.innerHTML = subTabs +
     table('🔴 Due / Overdue', due, '', 'var(--destructive)') +
     table('🟡 Not Yet Due', notDue, '', 'var(--warning)') +
     table('✅ Fully Paid', paid, '', 'var(--success)');
@@ -1606,6 +1630,265 @@ async function confirmFmsSync() {
     _pmtFmsPreview = null;
     pmtGenerate();
   } finally { btn.disabled = false; btn.textContent = '✅ Confirm & Import Bills'; }
+}
+
+// ══════════════════════════════════════════════════════
+// GOLD LEDGER — weight-based (18K/14K/9K), Fix/Unfix status, running
+// balance. Client Ledger ke andar ek sub-tab, "Bills" (₹) se ALAG.
+//
+// Kai formula abhi FINAL nahi hain (purity %, running-balance ka exact
+// business-logic) — isliye:
+//   - Purity % ek settings hai (⚙️ link se badal sakte ho, code chhue bina)
+//   - Har entry ka "Gold Weight Balance" add/subtract explicit hai (guess
+//     nahi karte particular text se)
+//   - Pure weight chahe to manually override bhi ho sakta hai
+// ══════════════════════════════════════════════════════
+let _pmtGoldLedgerData = null;
+let _glEditId = null; // null = naya entry; warna isi id ko edit kar rahe hain
+let _glFixId = null;
+let _glFixPureWt = 0;
+
+async function pmtLoadGoldLedger(clientId, subTabsHtml) {
+  const box = document.getElementById('pmtResults');
+  const data = await api(`/api/gold-ledger/${clientId}`);
+  const st = subTabsHtml !== undefined ? subTabsHtml : pmtLedgerSubTabsHtml(clientId);
+  if (data.error) { box.innerHTML = st + `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${escapeHtml(data.error)}</div>`; return; }
+  _pmtGoldLedgerData = data;
+  renderPmtGoldLedger(clientId, st);
+}
+
+function renderPmtGoldLedger(clientId, subTabsHtml) {
+  const box = document.getElementById('pmtResults');
+  const st = subTabsHtml !== undefined ? subTabsHtml : pmtLedgerSubTabsHtml(clientId);
+  const d = _pmtGoldLedgerData;
+  const last = d.entries[d.entries.length - 1];
+
+  const summary = last ? `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px">
+      <div style="background:var(--card);border-radius:10px;border:1px solid var(--border);padding:10px 14px">
+        <div style="font-size:10px;color:var(--muted-foreground);text-transform:uppercase">Balance Gold Wt</div>
+        <div style="font-size:16px;font-weight:700">${last.balanceGoldWt.toFixed(3)} g</div>
+      </div>
+      <div style="background:var(--card);border-radius:10px;border:1px solid var(--border);padding:10px 14px">
+        <div style="font-size:10px;color:var(--muted-foreground);text-transform:uppercase">Avg Gold Rate Sold</div>
+        <div style="font-size:16px;font-weight:700">${last.avgGoldRateSold != null ? pmtMoney(last.avgGoldRateSold) : '—'}</div>
+      </div>
+      <div style="background:var(--card);border-radius:10px;border:1px solid var(--border);padding:10px 14px">
+        <div style="font-size:10px;color:var(--muted-foreground);text-transform:uppercase">Dia/Labour Balance</div>
+        <div style="font-size:16px;font-weight:700">${pmtMoney(last.diaBalanceToTake)}</div>
+      </div>
+      <div style="background:var(--card);border-radius:10px;border:1px solid var(--border);padding:10px 14px">
+        <div style="font-size:10px;color:var(--muted-foreground);text-transform:uppercase">Total DR/CR</div>
+        <div style="font-size:16px;font-weight:700;color:${last.totalDrCr > 0 ? 'var(--destructive)' : 'var(--success)'}">${pmtMoney(last.totalDrCr)}</div>
+      </div>
+    </div>` : '';
+
+  const rowsHtml = d.entries.map(e => `
+    <tr>
+      <td style="padding:8px 10px;white-space:nowrap">${fmtDate(e.entryDate)}</td>
+      <td style="padding:8px 10px">${escapeHtml(e.particular)}${e.note ? `<div style="font-size:10px;color:var(--muted-foreground)">${escapeHtml(e.note)}</div>` : ''}</td>
+      <td style="padding:8px 10px;text-align:right">${e.gold18k || ''}</td>
+      <td style="padding:8px 10px;text-align:right">${e.gold14k || ''}</td>
+      <td style="padding:8px 10px;text-align:right">${e.gold9k || ''}</td>
+      <td style="padding:8px 10px;text-align:right;font-weight:600">${e.totalWt}</td>
+      <td style="padding:8px 10px;text-align:right;font-weight:600">${e.pureWt}${e.pureWtOverride != null ? ' 🔧' : ''}</td>
+      <td style="padding:8px 10px;text-align:center">${e.fixStatus === 'fixed' ? '<span class="status-badge completed">Fixed</span>' : '<span class="status-badge pending">Unfixed</span>'}</td>
+      <td style="padding:8px 10px;text-align:right">${e.goldRate != null ? pmtMoney(e.goldRate) : '—'}</td>
+      <td style="padding:8px 10px;text-align:right">${e.goldAmount ? pmtMoney(e.goldAmount) : '—'}</td>
+      <td style="padding:8px 10px;text-align:right">${e.diaAmount ? pmtMoney(e.diaAmount) : '—'}</td>
+      <td style="padding:8px 10px;text-align:right;font-weight:600">${pmtMoney(e.total)}</td>
+      <td style="padding:8px 10px;text-align:right">${e.recvdDia ? pmtMoney(e.recvdDia) : '—'}</td>
+      <td style="padding:8px 10px;text-align:right">${e.recvdGold ? pmtMoney(e.recvdGold) : '—'}</td>
+      <td style="padding:8px 10px;text-align:right;font-weight:700">${e.balanceGoldWt}</td>
+      <td style="padding:8px 10px;text-align:right">${pmtMoney(e.diaBalanceToTake)}</td>
+      <td style="padding:8px 10px;text-align:right">${e.avgGoldRateSold != null ? pmtMoney(e.avgGoldRateSold) : '—'}</td>
+      <td style="padding:8px 10px;text-align:right">${e.goldAmtRunningBal != null ? pmtMoney(e.goldAmtRunningBal) : '—'}</td>
+      <td style="padding:8px 10px;text-align:right;font-weight:700">${pmtMoney(e.totalDrCr)}</td>
+      <td style="padding:8px 10px;white-space:nowrap">
+        ${e.fixStatus === 'unfixed' ? `<button class="btn btn-primary btn-sm" onclick="openFixGoldRate(${e.id})">🔒 Fix</button>` : ''}
+        <button class="action-btn edit" onclick="openEditGoldEntry(${e.id})" title="Edit">✏️</button>
+        <button class="action-btn delete" onclick="deleteGoldEntry(${e.id},${clientId})" title="Delete">🗑</button>
+      </td>
+    </tr>`).join('');
+
+  box.innerHTML = st + `
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+      <div style="font-size:12px;color:var(--muted-foreground)">Purity used: 18K=${(d.purity.p18*100).toFixed(2)}%, 14K=${(d.purity.p14*100).toFixed(2)}%, 9K=${(d.purity.p9*100).toFixed(2)}% — <a href="#" onclick="openGoldPuritySettings();return false;" style="color:var(--primary)">change</a></div>
+      <button class="btn btn-primary btn-sm" onclick="openAddGoldEntry(${clientId})">+ Add Ledger Entry</button>
+    </div>
+    ${summary}
+    <div style="background:var(--card);border-radius:12px;border:1px solid var(--border);overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap">
+        <thead><tr style="text-align:left">
+          <th style="padding:8px 10px;background:var(--muted)">Date</th>
+          <th style="padding:8px 10px;background:var(--muted)">Particular</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">18K</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">14K</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">9K</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">Total Wt</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">Pure .999</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:center">Status</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">Gold Rate</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">Gold Amt</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">Dia/Labour</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">Total</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">Recvd (Dia)</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">Recvd (Gold)</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">Bal Gold Wt</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">Dia Bal</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">Avg Rate</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">Gold Amt Bal</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right">Total DR/CR</th>
+          <th style="padding:8px 10px;background:var(--muted)">Action</th>
+        </tr></thead>
+        <tbody>${rowsHtml || `<tr><td colspan="19" class="empty" style="text-align:center;padding:20px">No ledger entries yet</td></tr>`}</tbody>
+      </table>
+    </div>`;
+}
+
+function glToggleFixFields() {
+  const fixed = document.getElementById('glFixStatus').value === 'fixed';
+  document.getElementById('glRateWrap').style.display = fixed ? '' : 'none';
+  document.getElementById('glAmountWrap').style.display = fixed ? '' : 'none';
+}
+
+function openAddGoldEntry(clientId) {
+  _glEditId = null;
+  document.getElementById('glEntryTitle').textContent = '+ Add Gold Ledger Entry';
+  document.getElementById('glEntryErr').style.display = 'none';
+  document.getElementById('glDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('glParticular').value = 'Sale Bill';
+  ['glGold18k','glGold14k','glGold9k','glPureOverride','glGoldRate','glGoldAmount','glDiaAmount','glPgGoldWt','glRecvdDia','glRecvdGold'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('glFixStatus').value = 'unfixed';
+  document.getElementById('glDirection').value = 'add';
+  document.getElementById('glCountsAsSale').checked = true;
+  document.getElementById('glNote').value = '';
+  glToggleFixFields();
+  document.getElementById('glEntryModal').dataset.clientId = clientId;
+  document.getElementById('glEntryModal').classList.add('open');
+}
+
+function openEditGoldEntry(id) {
+  const e = _pmtGoldLedgerData.entries.find(x => x.id === id);
+  if (!e) return;
+  _glEditId = id;
+  document.getElementById('glEntryTitle').textContent = '✏️ Edit Gold Ledger Entry';
+  document.getElementById('glEntryErr').style.display = 'none';
+  document.getElementById('glDate').value = e.entryDate;
+  document.getElementById('glParticular').value = e.particular;
+  document.getElementById('glGold18k').value = e.gold18k || '';
+  document.getElementById('glGold14k').value = e.gold14k || '';
+  document.getElementById('glGold9k').value = e.gold9k || '';
+  document.getElementById('glPureOverride').value = e.pureWtOverride != null ? e.pureWtOverride : '';
+  document.getElementById('glFixStatus').value = e.fixStatus;
+  document.getElementById('glGoldRate').value = e.goldRate != null ? e.goldRate : '';
+  document.getElementById('glGoldAmount').value = e.goldAmount || '';
+  document.getElementById('glDiaAmount').value = e.diaAmount || '';
+  document.getElementById('glPgGoldWt').value = e.pgGoldWt != null ? e.pgGoldWt : '';
+  document.getElementById('glRecvdDia').value = e.recvdDia || '';
+  document.getElementById('glRecvdGold').value = e.recvdGold || '';
+  document.getElementById('glDirection').value = e.balanceDirection;
+  document.getElementById('glCountsAsSale').checked = e.countsAsSale;
+  document.getElementById('glNote').value = e.note || '';
+  glToggleFixFields();
+  document.getElementById('glEntryModal').dataset.clientId = _pmtGoldLedgerClientIdOf();
+  document.getElementById('glEntryModal').classList.add('open');
+}
+
+async function saveGoldEntry() {
+  const err = document.getElementById('glEntryErr');
+  err.style.display = 'none';
+  const entryDate = document.getElementById('glDate').value;
+  if (!entryDate) { err.textContent = 'Date required'; err.style.display = ''; return; }
+  const body = {
+    clientUserId: document.getElementById('glEntryModal').dataset.clientId,
+    entryDate,
+    particular: document.getElementById('glParticular').value,
+    gold18k: document.getElementById('glGold18k').value,
+    gold14k: document.getElementById('glGold14k').value,
+    gold9k: document.getElementById('glGold9k').value,
+    pureWtOverride: document.getElementById('glPureOverride').value,
+    fixStatus: document.getElementById('glFixStatus').value,
+    goldRate: document.getElementById('glGoldRate').value,
+    goldAmount: document.getElementById('glGoldAmount').value,
+    diaAmount: document.getElementById('glDiaAmount').value,
+    pgGoldWt: document.getElementById('glPgGoldWt').value,
+    recvdDia: document.getElementById('glRecvdDia').value,
+    recvdGold: document.getElementById('glRecvdGold').value,
+    balanceDirection: document.getElementById('glDirection').value,
+    countsAsSale: document.getElementById('glCountsAsSale').checked,
+    note: document.getElementById('glNote').value,
+  };
+  const r = _glEditId
+    ? await api(`/api/gold-ledger/${_glEditId}`, 'PUT', body)
+    : await api('/api/gold-ledger', 'POST', body);
+  if (r.error) { err.textContent = r.error; err.style.display = ''; return; }
+  closeModal('glEntryModal');
+  showToast(_glEditId ? '✅ Entry updated!' : '✅ Entry added!');
+  pmtLoadGoldLedger(body.clientUserId);
+}
+
+async function deleteGoldEntry(id, clientId) {
+  if (!await confirmDialog('Delete this gold ledger entry? This cannot be undone.', { title: 'Delete Entry', okText: 'Delete', danger: true })) return;
+  const r = await api(`/api/gold-ledger/${id}`, 'DELETE');
+  if (r.error) { showToast(r.error, 'error'); return; }
+  showToast('Entry deleted');
+  pmtLoadGoldLedger(clientId);
+}
+
+function openFixGoldRate(id) {
+  const e = _pmtGoldLedgerData.entries.find(x => x.id === id);
+  if (!e) return;
+  _glFixId = id;
+  _glFixPureWt = e.pureWt;
+  document.getElementById('glFixErr').style.display = 'none';
+  document.getElementById('glFixMeta').innerHTML = `<strong>${escapeHtml(e.particular)}</strong> · ${fmtDate(e.entryDate)}<br>Pure weight: <strong>${e.pureWt} g</strong>`;
+  document.getElementById('glFixRate').value = '';
+  document.getElementById('glFixPreview').textContent = '';
+  document.getElementById('glFixRate').oninput = () => {
+    const rate = parseFloat(document.getElementById('glFixRate').value) || 0;
+    document.getElementById('glFixPreview').textContent = rate > 0 ? `Gold Amount = ${_glFixPureWt} g × ₹${rate} = ${pmtMoney(_glFixPureWt * rate)}` : '';
+  };
+  document.getElementById('glFixModal').classList.add('open');
+}
+
+async function saveFixGoldRate() {
+  const err = document.getElementById('glFixErr');
+  err.style.display = 'none';
+  const goldRate = document.getElementById('glFixRate').value;
+  const r = await api(`/api/gold-ledger/${_glFixId}/fix`, 'PUT', { goldRate });
+  if (r.error) { err.textContent = r.error; err.style.display = ''; return; }
+  closeModal('glFixModal');
+  showToast(`✅ Fixed! Gold Amount = ${pmtMoney(r.goldAmount)}`);
+  pmtLoadGoldLedger(_pmtGoldLedgerClientIdOf());
+}
+
+// glEntryModal ke dataset me client id store hoti hai — fix/delete flow me bhi wahi reuse
+function _pmtGoldLedgerClientIdOf() {
+  return document.getElementById('pmtClientFilter').value;
+}
+
+async function openGoldPuritySettings() {
+  document.getElementById('glPurityErr').style.display = 'none';
+  const p = await api('/api/gold-ledger/purity');
+  document.getElementById('glP18').value = p.error ? '' : (p.p18 * 100).toFixed(2);
+  document.getElementById('glP14').value = p.error ? '' : (p.p14 * 100).toFixed(2);
+  document.getElementById('glP9').value = p.error ? '' : (p.p9 * 100).toFixed(2);
+  document.getElementById('glPurityModal').classList.add('open');
+}
+
+async function saveGoldPuritySettings() {
+  const err = document.getElementById('glPurityErr');
+  err.style.display = 'none';
+  const p18 = parseFloat(document.getElementById('glP18').value) / 100;
+  const p14 = parseFloat(document.getElementById('glP14').value) / 100;
+  const p9 = parseFloat(document.getElementById('glP9').value) / 100;
+  if ([p18, p14, p9].some(v => isNaN(v))) { err.textContent = 'Saari teeno purity % bharo'; err.style.display = ''; return; }
+  const r = await api('/api/gold-ledger/purity', 'PUT', { p18, p14, p9 });
+  if (r.error) { err.textContent = r.error; err.style.display = ''; return; }
+  closeModal('glPurityModal');
+  showToast('✅ Purity settings saved!');
+  pmtLoadGoldLedger(_pmtGoldLedgerClientIdOf());
 }
 
 // ── Client Payment Terms modal ──

@@ -2513,6 +2513,156 @@
   </div>
 </div>
 
+<!-- ══════════════════════════════════════
+     GOLD LEDGER — weight-based (18K/14K/9K), Fix/Unfix status,
+     Payment Collection ke Client Ledger ke andar ek sub-tab
+══════════════════════════════════════ -->
+<div class="modal-overlay" id="glEntryModal">
+  <div class="modal" style="max-width:600px">
+    <h3 id="glEntryTitle">+ Add Gold Ledger Entry</h3>
+    <div class="alert error" id="glEntryErr"></div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Date</label>
+        <input type="date" id="glDate"/>
+      </div>
+      <div class="form-group">
+        <label>Particular</label>
+        <input type="text" id="glParticular" list="glParticularList" placeholder="Sale Bill"/>
+        <datalist id="glParticularList">
+          <option value="Sale Bill"></option>
+          <option value="Return"></option>
+          <option value="Recvd Gold"></option>
+          <option value="Recvd Payment"></option>
+          <option value="DR Note"></option>
+          <option value="Other"></option>
+        </datalist>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Gold Wt 18K (g)</label>
+        <input type="number" step="0.001" id="glGold18k" placeholder="0"/>
+      </div>
+      <div class="form-group">
+        <label>Gold Wt 14K (g)</label>
+        <input type="number" step="0.001" id="glGold14k" placeholder="0"/>
+      </div>
+      <div class="form-group">
+        <label>Gold Wt 9K (g)</label>
+        <input type="number" step="0.001" id="glGold9k" placeholder="0"/>
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--muted-foreground);margin:-8px 0 12px">Return jaisi entries ke liye weight negative type karo (jaise -159.51).</div>
+    <div class="form-group">
+      <label>Pure .999 Weight Override <span style="color:var(--muted-foreground);font-weight:400">(khaali chhodo — auto-calculate hoga purity settings se)</span></label>
+      <input type="number" step="0.001" id="glPureOverride" placeholder="auto"/>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Status</label>
+        <select id="glFixStatus" onchange="glToggleFixFields()">
+          <option value="unfixed">Unfixed (sirf weight, rate baad me)</option>
+          <option value="fixed">Fixed (rate already lock hai)</option>
+        </select>
+      </div>
+      <div class="form-group" id="glRateWrap" style="display:none">
+        <label>Gold Rate (₹/gram pure)</label>
+        <input type="number" step="0.01" id="glGoldRate" placeholder="0"/>
+      </div>
+    </div>
+    <div class="form-row" id="glAmountWrap" style="display:none">
+      <div class="form-group">
+        <label>Gold Amount (₹) <span style="color:var(--muted-foreground);font-weight:400">(rate se auto-bharega, chahe to badal do)</span></label>
+        <input type="number" step="0.01" id="glGoldAmount" placeholder="0"/>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Diamond/Labour &amp; Other Charges (₹)</label>
+        <input type="number" step="0.01" id="glDiaAmount" placeholder="0"/>
+      </div>
+      <div class="form-group">
+        <label>PG Gold WT <span style="color:var(--muted-foreground);font-weight:400">(optional)</span></label>
+        <input type="number" step="0.001" id="glPgGoldWt" placeholder="0"/>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Recvd Against Dia/Labour (₹)</label>
+        <input type="number" step="0.01" id="glRecvdDia" placeholder="0"/>
+      </div>
+      <div class="form-group">
+        <label>Recvd Against Gold (₹)</label>
+        <input type="number" step="0.01" id="glRecvdGold" placeholder="0"/>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Gold Weight Balance</label>
+        <select id="glDirection">
+          <option value="add">➕ Adds to running balance</option>
+          <option value="subtract">➖ Subtracts from running balance</option>
+        </select>
+      </div>
+      <div class="form-group" style="display:flex;align-items:center;padding-top:22px">
+        <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer">
+          <input type="checkbox" id="glCountsAsSale" checked style="width:auto"/> Counts in Avg Gold Rate Sold
+        </label>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Note / Working <span style="color:var(--muted-foreground);font-weight:400">(optional)</span></label>
+      <textarea id="glNote" style="min-height:50px"></textarea>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn btn-outline" onclick="closeModal('glEntryModal')">Cancel</button>
+      <button class="btn btn-primary" id="glSaveBtn" onclick="saveGoldEntry()">Save Entry</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="glFixModal">
+  <div class="modal" style="max-width:420px">
+    <h3>🔒 Fix Gold Rate</h3>
+    <div class="alert error" id="glFixErr"></div>
+    <div id="glFixMeta" style="font-size:12px;color:var(--muted-foreground);margin-bottom:14px"></div>
+    <div class="form-group">
+      <label>Gold Rate (₹ per gram, pure weight)</label>
+      <input type="number" step="0.01" id="glFixRate" placeholder="0"/>
+    </div>
+    <div id="glFixPreview" style="font-size:13px;font-weight:600;margin-bottom:6px"></div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn btn-outline" onclick="closeModal('glFixModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveFixGoldRate()">🔒 Fix &amp; Compute Amount</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="glPurityModal">
+  <div class="modal" style="max-width:420px">
+    <h3>⚙️ Gold Purity Settings</h3>
+    <div class="alert error" id="glPurityErr"></div>
+    <div style="font-size:12px;color:var(--muted-foreground);margin-bottom:14px">18K/14K/9K weight ko "Pure .999" weight me convert karne ke liye % — jo bhi tumhara business use karta hai wahi daal do.</div>
+    <div class="form-group">
+      <label>18K purity %</label>
+      <input type="number" step="0.01" id="glP18" placeholder="75.00"/>
+    </div>
+    <div class="form-group">
+      <label>14K purity %</label>
+      <input type="number" step="0.01" id="glP14" placeholder="58.33"/>
+    </div>
+    <div class="form-group">
+      <label>9K purity %</label>
+      <input type="number" step="0.01" id="glP9" placeholder="37.50"/>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn btn-outline" onclick="closeModal('glPurityModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveGoldPuritySettings()">Save</button>
+    </div>
+  </div>
+</div>
+
 <script src="/js/app.js"></script>
 </body>
 </html>

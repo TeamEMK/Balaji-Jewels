@@ -1501,6 +1501,7 @@ require('./routes/catalog')(app, ROUTE_CTX);
 require('./routes/payroll')(app, ROUTE_CTX);
 require('./routes/daily-task')(app, ROUTE_CTX);
 require('./routes/payments')(app, ROUTE_CTX);
+require('./routes/gold-ledger')(app, ROUTE_CTX);
 
 // ══════════════════════════════════════════════════════
 // TASKS
