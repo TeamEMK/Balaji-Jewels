@@ -26,6 +26,21 @@ const { parsePlanCellDate } = require('../lib/sheet-cols');
 const _normName = s => (s || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
 const _fuzzyKey = s => _normName(s).replace(/[^a-z0-9]+/g, '');
 
+// FMS cell se paisa nikaalta hai — "₹1,25,000.00" jaisa comma/currency-symbol
+// wala number theek se padhta hai, LEKIN agar cell me koi extra cheez ho
+// (jaise "159953+4659" ek adhoora formula, ya "#VALUE!" ek sheet error) to
+// use 0 maan kar chup nahi jaata — invalid flag karta hai. Warna comma/symbol
+// hatane wali purani approach "+" bhi hata deti thi aur do numbers aapas me
+// jud kar ek bahut bada (galat) number ban jaata tha — yehi asli bug tha.
+function _parseMoney(raw) {
+  let s = (raw || '').toString().trim();
+  if (!s) return { value: 0, invalid: false }; // khaali cell — 0, koi error nahi
+  s = s.replace(/^(₹|rs\.?|inr)\s*/i, '').trim();
+  if (!/^-?[\d,]+(\.\d+)?$/.test(s)) return { value: 0, invalid: true };
+  const value = parseFloat(s.replace(/,/g, ''));
+  return isNaN(value) ? { value: 0, invalid: true } : { value, invalid: false };
+}
+
 module.exports = function registerPaymentsRoutes(app, ctx) {
   const { db, requireAuth, requireAdmin } = ctx;
 
@@ -129,12 +144,14 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
 
       const rows = []; // {clientName, billNo, billDate, gold, diamond, fmsRef}
       const skippedSheets = [];
+      const invalidRows = []; // {sheet, row, clientName, goldRaw, diamondRaw} — number jaisa nahi lagta, guess nahi karte
       if (sheets.length) {
         const sheetsApi = await getSheetsClient(['https://www.googleapis.com/auth/spreadsheets.readonly']);
         for (const sheet of sheets) {
           try {
             const spreadsheetId = extractSpreadsheetId(sheet.sheet_id);
             const tabName = sheet.sheet_name || 'Sheet1';
+            const fmsName = sheet.fms_name || sheet.sheet_name;
             const headerRowIdx = (sheet.header_row || 1) - 1;
             const qTab = /^[A-Za-z0-9_]+$/.test(tabName) ? tabName : `'${tabName.replace(/'/g, "''")}'`;
             const response = await sheetsApi.spreadsheets.values.get({ spreadsheetId, range: qTab });
@@ -146,7 +163,7 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
             const iDiamond = find(/diamond.*(amount|value|amt)|(amount|value).*diamond/i);
             const iDate = find(/bill.*date|invoice.*date/i);
             const iBillNo = find(/bill\s*no|invoice\s*no/i);
-            if (iClient < 0 || iDate < 0 || (iGold < 0 && iDiamond < 0)) { skippedSheets.push(sheet.fms_name || sheet.sheet_name); continue; }
+            if (iClient < 0 || iDate < 0 || (iGold < 0 && iDiamond < 0)) { skippedSheets.push(fmsName); continue; }
 
             for (let i = headerRowIdx + 1; i < data.length; i++) {
               const row = data[i];
@@ -156,8 +173,16 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
               if (!billDateRaw) continue;
               const { planDate } = parsePlanCellDate(billDateRaw);
               if (!planDate) continue;
-              const gold = iGold >= 0 ? parseFloat((row[iGold] || '0').toString().replace(/[^0-9.-]/g, '')) || 0 : 0;
-              const diamond = iDiamond >= 0 ? parseFloat((row[iDiamond] || '0').toString().replace(/[^0-9.-]/g, '')) || 0 : 0;
+              const goldP = iGold >= 0 ? _parseMoney(row[iGold]) : { value: 0, invalid: false };
+              const diamondP = iDiamond >= 0 ? _parseMoney(row[iDiamond]) : { value: 0, invalid: false };
+              // Cell me number nahi, kuch aur hai (jaise "159953+4659" ya
+              // "#VALUE!") — is row ko GUESS nahi karte, seedha skip karke
+              // admin ko dikha dete hain, taaki wo sheet me sudhaar sake.
+              if (goldP.invalid || diamondP.invalid) {
+                invalidRows.push({ sheet: fmsName, row: i + 1, clientName, goldRaw: (row[iGold] || '').toString(), diamondRaw: (row[iDiamond] || '').toString() });
+                continue;
+              }
+              const gold = goldP.value, diamond = diamondP.value;
               if (gold <= 0 && diamond <= 0) continue;
               const billNo = iBillNo >= 0 ? (row[iBillNo] || '').toString().trim() : '';
               rows.push({ clientName, billNo, billDate: planDate, gold, diamond, fmsRef: `${sheet.id}:${tabName}:${i + 1}` });
@@ -190,7 +215,7 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
         };
       }).sort((a, b) => a.name.localeCompare(b.name));
 
-      res.json({ rows, clientNames, users: clientUsers, skippedSheets });
+      res.json({ rows, clientNames, users: clientUsers, skippedSheets, invalidRows });
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
   });
 
@@ -229,19 +254,34 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
         }
       }
 
-      let imported = 0, skipped = 0;
+      // ON CONFLICT ... DO UPDATE — pehle DO NOTHING tha, isliye sheet me
+      // galti sudharne ke baad bhi dobara sync karne par purani (pehle se
+      // import ho chuki) bill ka amount kabhi refresh nahi hota tha, wahi
+      // galat number hamesha dikhta rehta. Ab fms_ref match hone par amount/
+      // bill_no/bill_date hamesha sheet ki latest value se update ho jaate
+      // hain — gold_paid/diamond_paid (payments) ko haath nahi lagate.
+      //
+      // Insert vs update ka alag count nahi rakha — Postgres/MySQL dono
+      // "kitni rows affect hui" alag-alag tarah se batate hain (Postgres
+      // hamesha 1 deta hai chahe insert ho ya update; MySQL update par 2,
+      // no-op update par 0), isliye reliably distinguish nahi ho sakta. Ek
+      // hi "processed" count zyada bharosemand hai.
+      let processed = 0, skipped = 0;
       for (const r of rows) {
         const key = _normName(r.clientName);
         const clientId = clientIdByKey[key];
         if (!clientId) { skipped++; continue; }
-        const [result] = await db.query(
+        await db.query(
           `INSERT INTO client_bills (client_user_id,bill_no,bill_date,gold_amount,diamond_amount,source,fms_ref,created_by)
-           VALUES (?,?,?,?,?,'fms',?,?) ON CONFLICT (fms_ref) DO NOTHING`,
+           VALUES (?,?,?,?,?,'fms',?,?)
+           ON CONFLICT (fms_ref) DO UPDATE SET
+             bill_no = EXCLUDED.bill_no, bill_date = EXCLUDED.bill_date,
+             gold_amount = EXCLUDED.gold_amount, diamond_amount = EXCLUDED.diamond_amount`,
           [clientId, r.billNo || '', r.billDate, r.gold || 0, r.diamond || 0, r.fmsRef, req.session.userId]);
-        if (result.affectedRows) imported++;
+        processed++;
       }
 
-      res.json({ imported, skipped, createdClients });
+      res.json({ imported: processed, skipped, createdClients });
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
   });
 
