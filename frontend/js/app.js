@@ -1505,9 +1505,10 @@ function renderPmtFmsPreview() {
     ${userOptionsHtml}`;
 
   document.getElementById('pmtFmsBody').innerHTML = `
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;padding:10px;background:var(--muted);border-radius:8px">
+    <div id="pmtFmsBulkBar" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;padding:10px;background:var(--muted);border-radius:8px">
       <button class="btn btn-outline btn-sm" onclick="pmtFmsBulkAction('create')">🪄 Create accounts for all unmatched</button>
       <button class="btn btn-outline btn-sm" onclick="pmtFmsBulkAction('skip')">⏭ Skip all unmatched</button>
+      <span id="pmtFmsBulkStatus" style="font-size:12px;color:var(--muted-foreground);margin-left:4px"></span>
     </div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -1518,10 +1519,10 @@ function renderPmtFmsPreview() {
         </tr></thead>
         <tbody>${r.clientNames.map((c, i) => `
           <tr>
-            <td style="padding:8px 10px">${c.matchType==='exact'?'🟢':c.matchType==='guess'?'🟡':'🔴'} ${escapeHtml(c.name)}${c.matchType==='guess'?`<div style="font-size:10px;color:var(--muted-foreground)">guessed: ${escapeHtml(c.suggestedUserName)}</div>`:''}</td>
+            <td style="padding:8px 10px"><span id="pmtFmsDot${i}">${c.matchType==='exact'?'🟢':c.matchType==='guess'?'🟡':'🔴'}</span> ${escapeHtml(c.name)}${c.matchType==='guess'?`<div style="font-size:10px;color:var(--muted-foreground)">guessed: ${escapeHtml(c.suggestedUserName)}</div>`:''}</td>
             <td style="padding:8px 10px;text-align:center;font-weight:600">${c.count}</td>
             <td style="padding:8px 10px">
-              <select id="pmtFmsSel${i}" data-matchtype="${c.matchType}" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:var(--card);color:var(--foreground)">
+              <select id="pmtFmsSel${i}" data-matchtype="${c.matchType}" onchange="pmtFmsRowChanged(${i})" style="width:100%;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:var(--card);color:var(--foreground)">
                 ${optionsFor(c)}
               </select>
             </td>
@@ -1532,21 +1533,55 @@ function renderPmtFmsPreview() {
   r.clientNames.forEach((c, i) => {
     if (c.suggestedUserId) document.getElementById(`pmtFmsSel${i}`).value = c.suggestedUserId;
   });
+  pmtFmsUpdateBulkStatus();
+}
+
+// Dropdown badalne par (user khud se ya bulk button se) us row ka dot
+// turant update karo — 188 rows ki list me sirf toast se pata nahi chalta
+// ki kuch hua bhi ya nahi, ye dot hi asli proof hai.
+function pmtFmsRowChanged(i) {
+  const sel = document.getElementById(`pmtFmsSel${i}`);
+  const dot = document.getElementById(`pmtFmsDot${i}`);
+  if (!sel || !dot) return;
+  const v = sel.value;
+  dot.textContent = v === 'skip' ? '⚪' : v === 'create' ? '🆕' : '🔗';
+  pmtFmsUpdateBulkStatus();
+}
+
+function pmtFmsUpdateBulkStatus() {
+  const r = _pmtFmsPreview;
+  if (!r) return;
+  let toCreate = 0, toMap = 0, toSkip = 0;
+  r.clientNames.forEach((c, i) => {
+    const sel = document.getElementById(`pmtFmsSel${i}`);
+    if (!sel) return;
+    if (sel.value === 'create') toCreate++;
+    else if (sel.value === 'skip') toSkip++;
+    else toMap++;
+  });
+  const el = document.getElementById('pmtFmsBulkStatus');
+  if (el) el.textContent = `🆕 ${toCreate} to create · 🔗 ${toMap} mapped · ⚪ ${toSkip} to skip`;
 }
 
 // Ek click me saare 🔴 unmatched rows par ek hi action laga do — 1-by-1
 // select karne se bachne ke liye. Already matched (exact/guess) rows ko
-// chhedta nahi.
+// chhedta nahi. Har row ka dot turant update hota hai (pmtFmsRowChanged)
+// taaki 188 jaisi badi list me bhi saaf dikhe ki button kaam kar raha hai.
 function pmtFmsBulkAction(action) {
-  const r = _pmtFmsPreview;
-  if (!r) return;
-  let count = 0;
-  r.clientNames.forEach((c, i) => {
-    if (c.matchType !== 'none') return; // sirf unmatched par bulk lagao
-    const sel = document.getElementById(`pmtFmsSel${i}`);
-    if (sel) { sel.value = action; count++; }
-  });
-  showToast(count ? `${count} row(s) set to "${action === 'create' ? 'Create new account' : 'Skip'}"` : 'No unmatched rows to update');
+  try {
+    const r = _pmtFmsPreview;
+    if (!r) { showToast('Preview data not loaded — try Sync from FMS again', 'error'); return; }
+    let count = 0;
+    r.clientNames.forEach((c, i) => {
+      if (c.matchType !== 'none') return; // sirf unmatched (🔴) par bulk lagao
+      const sel = document.getElementById(`pmtFmsSel${i}`);
+      if (sel) { sel.value = action; pmtFmsRowChanged(i); count++; }
+    });
+    showToast(count ? `✅ ${count} row(s) set to "${action === 'create' ? 'Create new account' : 'Skip'}"` : 'No unmatched (🔴) rows found — everything is already matched');
+  } catch (e) {
+    console.error('pmtFmsBulkAction failed:', e);
+    showToast('Something went wrong applying the bulk action — check console (F12) and tell support', 'error');
+  }
 }
 
 async function confirmFmsSync() {

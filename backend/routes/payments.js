@@ -232,26 +232,35 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
 
       // 'create' wale naye client (Catalog-only) accounts pehle bana lo —
       // random password (koi use nahi karega, bill track karne ke liye account
-      // bas chahiye), unique email placeholder domain par.
+      // bas chahiye), unique email placeholder domain par. Bulk sync me
+      // (jaise "Create accounts for all unmatched") ye 100-200 naye accounts
+      // ek saath ban sakte hain — isliye duplicate-email check EK baari me
+      // (loop ke andar har naam ke liye alag query nahi) aur bcrypt cost kam
+      // (6, in accounts me kabhi login nahi hoga) rakha hai, taaki poora
+      // Confirm & Import fast rahe aur timeout na ho.
       const clientIdByKey = {};
       let createdClients = 0;
-      for (const [key, m] of Object.entries(mapping)) {
-        if (!m || m.action === 'skip') continue;
-        if (m.action === 'existing' && m.userId) { clientIdByKey[key] = parseInt(m.userId, 10); continue; }
-        if (m.action === 'create') {
+      const createKeys = Object.entries(mapping).filter(([, m]) => m && m.action === 'create').map(([key]) => key);
+      if (createKeys.length) {
+        const [existingPlaceholders] = await db.query(`SELECT email FROM users WHERE email LIKE '%@fms-client.local'`);
+        const usedEmails = new Set(existingPlaceholders.map(u => (u.email || '').toLowerCase()));
+        for (const key of createKeys) {
           const sampleRow = rows.find(r => _normName(r.clientName) === key);
           const displayName = (sampleRow && sampleRow.clientName) || key;
           const slug = displayName.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') || 'client';
           let email = `${slug}@fms-client.local`;
-          const [exists] = await db.query('SELECT id FROM users WHERE LOWER(email)=LOWER(?)', [email]);
-          if (exists.length) email = `${slug}.${crypto.randomBytes(3).toString('hex')}@fms-client.local`;
+          if (usedEmails.has(email)) email = `${slug}.${crypto.randomBytes(3).toString('hex')}@fms-client.local`;
+          usedEmails.add(email);
           const randomPassword = crypto.randomBytes(16).toString('hex');
           const [ins] = await db.query(
             `INSERT INTO users (name,email,password,role,staff_type) VALUES (?,?,?,?,?)`,
-            [displayName, email, bcrypt.hashSync(randomPassword, 10), 'client', 'office']);
+            [displayName, email, bcrypt.hashSync(randomPassword, 6), 'client', 'office']);
           clientIdByKey[key] = ins.insertId;
           createdClients++;
         }
+      }
+      for (const [key, m] of Object.entries(mapping)) {
+        if (m && m.action === 'existing' && m.userId) clientIdByKey[key] = parseInt(m.userId, 10);
       }
 
       // ON CONFLICT ... DO UPDATE — pehle DO NOTHING tha, isliye sheet me
