@@ -1671,8 +1671,25 @@ function renderPmtGoldLedger(clientId, subTabsHtml) {
   const d = _pmtGoldLedgerData;
   const last = d.entries[d.entries.length - 1];
 
+  // Fixed (rate lock ho chuki, ₹ me) aur Unfixed (sirf weight, rate baad me)
+  // — dono alag-alag total, taaki ek nazar me pata chale kitna fix ho chuka
+  // hai aur kitna abhi bhi weight-based pending hai.
+  let totalFixedAmt = 0, totalUnfixedWt = 0;
+  d.entries.forEach(e => {
+    if (e.fixStatus === 'fixed') totalFixedAmt += e.goldAmount;
+    else totalUnfixedWt += e.pureWt;
+  });
+
   const summary = last ? `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px">
+      <div style="background:color-mix(in srgb,var(--success) 8%,var(--card));border-radius:10px;border:1px solid color-mix(in srgb,var(--success) 22%,transparent);padding:10px 14px">
+        <div style="font-size:10px;color:var(--success);text-transform:uppercase;font-weight:600">🔒 Total Fixed</div>
+        <div style="font-size:16px;font-weight:700">${pmtMoney(totalFixedAmt)}</div>
+      </div>
+      <div style="background:color-mix(in srgb,var(--warning) 8%,var(--card));border-radius:10px;border:1px solid color-mix(in srgb,var(--warning) 22%,transparent);padding:10px 14px">
+        <div style="font-size:10px;color:var(--warning);text-transform:uppercase;font-weight:600">🔓 Total Unfixed</div>
+        <div style="font-size:16px;font-weight:700">${totalUnfixedWt.toFixed(3)} g</div>
+      </div>
       <div style="background:var(--card);border-radius:10px;border:1px solid var(--border);padding:10px 14px">
         <div style="font-size:10px;color:var(--muted-foreground);text-transform:uppercase">Balance Gold Wt</div>
         <div style="font-size:16px;font-weight:700">${last.balanceGoldWt.toFixed(3)} g</div>
@@ -1700,7 +1717,8 @@ function renderPmtGoldLedger(clientId, subTabsHtml) {
       <td style="padding:8px 10px;text-align:right">${e.gold9k || ''}</td>
       <td style="padding:8px 10px;text-align:right;font-weight:600">${e.totalWt}</td>
       <td style="padding:8px 10px;text-align:right;font-weight:600">${e.pureWt}${e.pureWtOverride != null ? ' 🔧' : ''}</td>
-      <td style="padding:8px 10px;text-align:center">${e.fixStatus === 'fixed' ? '<span class="status-badge completed">Fixed</span>' : '<span class="status-badge pending">Unfixed</span>'}</td>
+      <td style="padding:8px 10px;text-align:right;color:var(--success);font-weight:600">${e.fixStatus === 'fixed' ? pmtMoney(e.goldAmount) : '—'}</td>
+      <td style="padding:8px 10px;text-align:right;color:var(--warning);font-weight:600">${e.fixStatus === 'unfixed' ? e.pureWt + ' g' : '—'}</td>
       <td style="padding:8px 10px;text-align:right">${e.goldRate != null ? pmtMoney(e.goldRate) : '—'}</td>
       <td style="padding:8px 10px;text-align:right">${e.goldAmount ? pmtMoney(e.goldAmount) : '—'}</td>
       <td style="padding:8px 10px;text-align:right">${e.diaAmount ? pmtMoney(e.diaAmount) : '—'}</td>
@@ -1735,7 +1753,8 @@ function renderPmtGoldLedger(clientId, subTabsHtml) {
           <th style="padding:8px 10px;background:var(--muted);text-align:right">9K</th>
           <th style="padding:8px 10px;background:var(--muted);text-align:right">Total Wt</th>
           <th style="padding:8px 10px;background:var(--muted);text-align:right">Pure .999</th>
-          <th style="padding:8px 10px;background:var(--muted);text-align:center">Status</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right;color:var(--success)">🔒 Fixed (₹)</th>
+          <th style="padding:8px 10px;background:var(--muted);text-align:right;color:var(--warning)">🔓 Unfixed (g)</th>
           <th style="padding:8px 10px;background:var(--muted);text-align:right">Gold Rate</th>
           <th style="padding:8px 10px;background:var(--muted);text-align:right">Gold Amt</th>
           <th style="padding:8px 10px;background:var(--muted);text-align:right">Dia/Labour</th>
@@ -1749,7 +1768,7 @@ function renderPmtGoldLedger(clientId, subTabsHtml) {
           <th style="padding:8px 10px;background:var(--muted);text-align:right">Total DR/CR</th>
           <th style="padding:8px 10px;background:var(--muted)">Action</th>
         </tr></thead>
-        <tbody>${rowsHtml || `<tr><td colspan="19" class="empty" style="text-align:center;padding:20px">No ledger entries yet</td></tr>`}</tbody>
+        <tbody>${rowsHtml || `<tr><td colspan="21" class="empty" style="text-align:center;padding:20px">No ledger entries yet</td></tr>`}</tbody>
       </table>
     </div>`;
 }
