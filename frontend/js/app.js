@@ -1665,6 +1665,15 @@ let _pmtGoldLedgerData = null;
 let _glEditId = null; // null = naya entry; warna isi id ko edit kar rahe hain
 let _glFixId = null;
 let _glFixPureWt = 0;
+let _glFilterStatus = 'all'; // 'all' | 'fixed' | 'unfixed' — toolbar ke 🔒/🔓 badge se table filter hoti hai
+let _glLastLoadedClientId = null; // client badle to filter reset, edit/refresh par nahi (warna Unfixed filter karke fix karte waqt baar-baar list poori dikhne lagti)
+
+// Fixed/Unfixed badge dabane par table filter ho jaati hai — dobara dabao
+// to filter hat jaata hai (wapas 'all')
+function pmtGoldFilterToggle(status) {
+  _glFilterStatus = (_glFilterStatus === status) ? 'all' : status;
+  renderPmtGoldLedger(_pmtGoldLedgerClientIdOf());
+}
 
 async function pmtLoadGoldLedger(clientId, subTabsHtml) {
   const box = document.getElementById('pmtResults');
@@ -1672,6 +1681,11 @@ async function pmtLoadGoldLedger(clientId, subTabsHtml) {
   const st = subTabsHtml !== undefined ? subTabsHtml : pmtLedgerSubTabsHtml(clientId);
   if (data.error) { box.innerHTML = st + `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);color:var(--destructive)">⚠️ ${escapeHtml(data.error)}</div>`; return; }
   _pmtGoldLedgerData = data;
+  // Naya client hai to filter reset karo; usi client ka refresh (edit/fix ke
+  // baad) ho to filter waisa hi rehne do — warna Unfixed filter karke fix
+  // karte waqt har save par poori list dobara dikhne lagegi.
+  if (String(clientId) !== String(_glLastLoadedClientId)) _glFilterStatus = 'all';
+  _glLastLoadedClientId = clientId;
   renderPmtGoldLedger(clientId, st);
 }
 
@@ -1690,10 +1704,26 @@ function renderPmtGoldLedger(clientId, subTabsHtml) {
     if (e.fixStatus === 'fixed') totalFixedAmt += e.goldAmount;
     else totalUnfixedWt += e.pureWt;
   });
+  // Badge par click karke table isi status se filter ho jaati hai — dobara
+  // dabao to filter hat jaata hai. Active filter ko border se highlight karte hain.
   const fixedBadge = document.getElementById('pmtGoldFixedBadge');
   const unfixedBadge = document.getElementById('pmtGoldUnfixedBadge');
-  if (fixedBadge) { fixedBadge.textContent = `🔒 Fixed: ${pmtMoney(totalFixedAmt)}`; fixedBadge.style.display = ''; }
-  if (unfixedBadge) { unfixedBadge.textContent = `🔓 Unfixed: ${totalUnfixedWt.toFixed(3)} g`; unfixedBadge.style.display = ''; }
+  if (fixedBadge) {
+    fixedBadge.textContent = `🔒 Fixed: ${pmtMoney(totalFixedAmt)}`;
+    fixedBadge.style.display = '';
+    fixedBadge.style.cursor = 'pointer';
+    fixedBadge.style.boxShadow = _glFilterStatus === 'fixed' ? '0 0 0 2px var(--success)' : 'none';
+    fixedBadge.onclick = () => pmtGoldFilterToggle('fixed');
+    fixedBadge.title = 'Sirf Fixed entries dikhane ke liye click karo';
+  }
+  if (unfixedBadge) {
+    unfixedBadge.textContent = `🔓 Unfixed: ${totalUnfixedWt.toFixed(3)} g`;
+    unfixedBadge.style.display = '';
+    unfixedBadge.style.cursor = 'pointer';
+    unfixedBadge.style.boxShadow = _glFilterStatus === 'unfixed' ? '0 0 0 2px var(--warning)' : 'none';
+    unfixedBadge.onclick = () => pmtGoldFilterToggle('unfixed');
+    unfixedBadge.title = 'Sirf Unfixed entries dikhane ke liye click karo';
+  }
 
   const summary = last ? `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px">
@@ -1715,7 +1745,10 @@ function renderPmtGoldLedger(clientId, subTabsHtml) {
       </div>
     </div>` : '';
 
-  const rowsHtml = d.entries.map(e => `
+  // Toolbar ke 🔒/🔓 badge se filter — 'all' ho to sab dikhta hai
+  const filteredEntries = _glFilterStatus === 'all' ? d.entries : d.entries.filter(e => e.fixStatus === _glFilterStatus);
+
+  const rowsHtml = filteredEntries.map(e => `
     <tr>
       <td style="padding:8px 10px;white-space:nowrap">${fmtDate(e.entryDate)}</td>
       <td style="padding:8px 10px">${escapeHtml(e.particular)}${e.note ? `<div style="font-size:10px;color:var(--muted-foreground)">${escapeHtml(e.note)}</div>` : ''}</td>
@@ -1724,8 +1757,6 @@ function renderPmtGoldLedger(clientId, subTabsHtml) {
       <td style="padding:8px 10px;text-align:right">${e.gold9k || ''}</td>
       <td style="padding:8px 10px;text-align:right;font-weight:600">${e.totalWt}</td>
       <td style="padding:8px 10px;text-align:right;font-weight:600">${e.pureWt}${e.pureWtOverride != null ? ' 🔧' : ''}</td>
-      <td style="padding:8px 10px;text-align:right;color:var(--success);font-weight:600">${e.fixStatus === 'fixed' ? pmtMoney(e.goldAmount) : '—'}</td>
-      <td style="padding:8px 10px;text-align:right;color:var(--warning);font-weight:600">${e.fixStatus === 'unfixed' ? e.pureWt + ' g' : '—'}</td>
       <td style="padding:8px 10px;text-align:right">${e.goldRate != null ? pmtMoney(e.goldRate) : '—'}</td>
       <td style="padding:8px 10px;text-align:right">${e.goldAmount ? pmtMoney(e.goldAmount) : '—'}</td>
       <td style="padding:8px 10px;text-align:right">${e.diaAmount ? pmtMoney(e.diaAmount) : '—'}</td>
@@ -1760,8 +1791,6 @@ function renderPmtGoldLedger(clientId, subTabsHtml) {
           <th style="padding:8px 10px;background:var(--muted);text-align:right">9K</th>
           <th style="padding:8px 10px;background:var(--muted);text-align:right">Total Wt</th>
           <th style="padding:8px 10px;background:var(--muted);text-align:right">Pure .999</th>
-          <th style="padding:8px 10px;background:var(--muted);text-align:right;color:var(--success)">🔒 Fixed (₹)</th>
-          <th style="padding:8px 10px;background:var(--muted);text-align:right;color:var(--warning)">🔓 Unfixed (g)</th>
           <th style="padding:8px 10px;background:var(--muted);text-align:right">Gold Rate</th>
           <th style="padding:8px 10px;background:var(--muted);text-align:right">Gold Amt</th>
           <th style="padding:8px 10px;background:var(--muted);text-align:right">Dia/Labour</th>
@@ -1775,7 +1804,7 @@ function renderPmtGoldLedger(clientId, subTabsHtml) {
           <th style="padding:8px 10px;background:var(--muted);text-align:right">Total DR/CR</th>
           <th style="padding:8px 10px;background:var(--muted)">Action</th>
         </tr></thead>
-        <tbody>${rowsHtml || `<tr><td colspan="21" class="empty" style="text-align:center;padding:20px">No ledger entries yet</td></tr>`}</tbody>
+        <tbody>${rowsHtml || `<tr><td colspan="19" class="empty" style="text-align:center;padding:20px">${d.entries.length ? `No ${_glFilterStatus} entries` : 'No ledger entries yet'}</td></tr>`}</tbody>
       </table>
     </div>`;
 }
