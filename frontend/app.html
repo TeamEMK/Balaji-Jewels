@@ -859,6 +859,9 @@
       </div>
       <button class="btn btn-primary" onclick="pmtGenerate()">Generate</button>
       <button class="btn btn-outline" onclick="pmtShowAllTime()" title="Date filter clear karke poora data dikhao">📅 All Time</button>
+      <!-- Gold Ledger view me hi dikhte hain (renderPmtGoldLedger update karta hai) -->
+      <span id="pmtGoldFixedBadge" style="display:none;padding:8px 14px;border-radius:8px;background:color-mix(in srgb,var(--success) 10%,transparent);border:1px solid color-mix(in srgb,var(--success) 25%,transparent);color:var(--success);font-size:13px;font-weight:700;white-space:nowrap">🔒 Fixed: —</span>
+      <span id="pmtGoldUnfixedBadge" style="display:none;padding:8px 14px;border-radius:8px;background:color-mix(in srgb,var(--warning) 10%,transparent);border:1px solid color-mix(in srgb,var(--warning) 25%,transparent);color:var(--warning);font-size:13px;font-weight:700;white-space:nowrap">🔓 Unfixed: —</span>
     </div>
 
     <div id="pmtResults">

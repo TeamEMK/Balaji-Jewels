@@ -1330,10 +1330,19 @@ function pmtSwitchTab(tab) {
 }
 
 function pmtGenerate() {
+  // Fixed/Unfixed badges sirf Gold Ledger view me chahiye — baaki har jagah
+  // (Overview/Bills/Aging/Customers) hide, renderPmtGoldLedger hi unhe wapas dikhayega.
+  pmtHideGoldBadges();
   if (_pmtTab === 'overview') return pmtLoadOverview();
   if (_pmtTab === 'ledger') return pmtLoadLedger();
   if (_pmtTab === 'aging') return pmtLoadAging();
   if (_pmtTab === 'customers') return pmtLoadCustomers();
+}
+
+function pmtHideGoldBadges() {
+  const f = document.getElementById('pmtGoldFixedBadge'), u = document.getElementById('pmtGoldUnfixedBadge');
+  if (f) f.style.display = 'none';
+  if (u) u.style.display = 'none';
 }
 
 function pmtDateQS() {
@@ -1395,6 +1404,7 @@ function pmtSwitchLedgerView(view) {
 }
 
 async function pmtLoadLedger() {
+  pmtHideGoldBadges(); // renderPmtGoldLedger yahi wapas dikha dega agar gold view ho
   const box = document.getElementById('pmtResults');
   const clientId = document.getElementById('pmtClientFilter').value;
   const subTabs = pmtLedgerSubTabsHtml(clientId);
@@ -1672,24 +1682,21 @@ function renderPmtGoldLedger(clientId, subTabsHtml) {
   const last = d.entries[d.entries.length - 1];
 
   // Fixed (rate lock ho chuki, ₹ me) aur Unfixed (sirf weight, rate baad me)
-  // — dono alag-alag total, taaki ek nazar me pata chale kitna fix ho chuka
-  // hai aur kitna abhi bhi weight-based pending hai.
+  // — dono alag-alag total. Ab card ki jagah upar toolbar me badge banate
+  // hain (⚖️ Gold Ledger ke "All Time" button ke saath) taaki scroll kiye
+  // bina hamesha dikhe.
   let totalFixedAmt = 0, totalUnfixedWt = 0;
   d.entries.forEach(e => {
     if (e.fixStatus === 'fixed') totalFixedAmt += e.goldAmount;
     else totalUnfixedWt += e.pureWt;
   });
+  const fixedBadge = document.getElementById('pmtGoldFixedBadge');
+  const unfixedBadge = document.getElementById('pmtGoldUnfixedBadge');
+  if (fixedBadge) { fixedBadge.textContent = `🔒 Fixed: ${pmtMoney(totalFixedAmt)}`; fixedBadge.style.display = ''; }
+  if (unfixedBadge) { unfixedBadge.textContent = `🔓 Unfixed: ${totalUnfixedWt.toFixed(3)} g`; unfixedBadge.style.display = ''; }
 
   const summary = last ? `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px">
-      <div style="background:color-mix(in srgb,var(--success) 8%,var(--card));border-radius:10px;border:1px solid color-mix(in srgb,var(--success) 22%,transparent);padding:10px 14px">
-        <div style="font-size:10px;color:var(--success);text-transform:uppercase;font-weight:600">🔒 Total Fixed</div>
-        <div style="font-size:16px;font-weight:700">${pmtMoney(totalFixedAmt)}</div>
-      </div>
-      <div style="background:color-mix(in srgb,var(--warning) 8%,var(--card));border-radius:10px;border:1px solid color-mix(in srgb,var(--warning) 22%,transparent);padding:10px 14px">
-        <div style="font-size:10px;color:var(--warning);text-transform:uppercase;font-weight:600">🔓 Total Unfixed</div>
-        <div style="font-size:16px;font-weight:700">${totalUnfixedWt.toFixed(3)} g</div>
-      </div>
       <div style="background:var(--card);border-radius:10px;border:1px solid var(--border);padding:10px 14px">
         <div style="font-size:10px;color:var(--muted-foreground);text-transform:uppercase">Balance Gold Wt</div>
         <div style="font-size:16px;font-weight:700">${last.balanceGoldWt.toFixed(3)} g</div>
