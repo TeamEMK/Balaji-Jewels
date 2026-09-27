@@ -1292,13 +1292,21 @@ let _pmtClients = []; // {id,name,email,gold_days,diamond_days}
 const pmtMoney = v => `₹${(Number(v) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 async function initPaymentsPage() {
-  const end = document.getElementById('pmtStart');
-  if (end && !end.value) {
-    const now = new Date();
-    document.getElementById('pmtStart').value = new Date(now.getFullYear(), now.getMonth() - 2, 1).toISOString().slice(0, 10);
-    document.getElementById('pmtEnd').value = now.toISOString().slice(0, 10);
-  }
+  // Date range default me KHAALI rakhte hain — matlab "All Time". Pehle
+  // last-3-months default tha, jisse FMS se sync hui purani bills (jaise
+  // Sept 2025 se) Overview ke total me dikhti hi nahi thi (sirf display ka
+  // masla tha, data theek se save ho raha tha) — admin ko laga sync galat
+  // hai jabki sirf date-filter unhe purani bills se chhupa raha tha.
   await pmtLoadClientsList();
+  pmtGenerate();
+}
+
+// Overview/Ledger/Aging me date fields clear karke poora data dikhao — ek
+// click me "narrow date-range ne data chhupaya hai" wali confusion se bachne
+// ke liye
+function pmtShowAllTime() {
+  document.getElementById('pmtStart').value = '';
+  document.getElementById('pmtEnd').value = '';
   pmtGenerate();
 }
 
