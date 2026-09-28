@@ -227,7 +227,10 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
         };
       }).sort((a, b) => a.name.localeCompare(b.name));
 
-      res.json({ rows, clientNames, users: clientUsers, skippedSheets, invalidRows });
+      // Diagnostic — "column mila ya nahi" guess na karna pade, seedha dikhe.
+      const rowsWithTerms = rows.filter(r => r.goldDays != null || r.diamondDays != null).length;
+
+      res.json({ rows, clientNames, users: clientUsers, skippedSheets, invalidRows, rowsWithTerms });
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
   });
 

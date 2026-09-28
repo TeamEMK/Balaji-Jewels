@@ -1555,8 +1555,13 @@ function renderPmtFmsPreview() {
   const r = _pmtFmsPreview;
   const unmatched = r.clientNames.filter(c => c.matchType === 'none').length;
   const guessed = r.clientNames.filter(c => c.matchType === 'guess').length;
+  const termsCount = r.rowsWithTerms || 0;
+  const termsBanner = termsCount > 0
+    ? `<div style="margin-top:8px;font-size:12px;color:var(--success)">✅ Gold/Diamond Terms column mil gaya — ${termsCount} of ${r.rows.length} row(s) me terms value hai, Confirm karte hi client terms auto-set ho jaayenge.</div>`
+    : `<div style="margin-top:8px;font-size:12px;color:var(--destructive)">⚠️ Koi bhi row me Gold/Diamond Terms nahi mila — column header me "Gold Terms"/"Diamond Terms" jaisa naam nahi mila, ya poori sheet me cells khaali hain. Client Terms manually ⚙️ button se set karne honge.</div>`;
   document.getElementById('pmtFmsMeta').innerHTML =
     `${r.rows.length} billable row(s) found across ${r.clientNames.length} client name(s)${guessed ? ` · <strong style="color:var(--chart-1)">${guessed} auto-guessed</strong> (check before confirming)` : ''}${unmatched ? ` · <strong style="color:var(--warning)">${unmatched} need${unmatched===1?'s':''} your input</strong>` : ''}${r.skippedSheets.length ? ` · ${r.skippedSheets.length} sheet(s) skipped (no billing columns)` : ''}
+    ${termsBanner}
     ${r.invalidRows && r.invalidRows.length ? `<div style="margin-top:8px;background:color-mix(in srgb,var(--destructive) 10%,transparent);border:1px solid color-mix(in srgb,var(--destructive) 22%,transparent);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--destructive)">
       ⚠️ ${r.invalidRows.length} row(s) skipped — Gold/Diamond Amount cell doesn't look like a plain number (e.g. a leftover formula like "159953+4659" or a sheet error like "#VALUE!"). Fix these in the sheet, then Sync again:
       <ul style="margin:4px 0 0 18px;padding:0">${r.invalidRows.slice(0,10).map(v => `<li>${escapeHtml(v.sheet)} · row ${v.row} · <strong>${escapeHtml(v.clientName)}</strong> — Gold: "${escapeHtml(v.goldRaw)}", Diamond: "${escapeHtml(v.diamondRaw)}"</li>`).join('')}${r.invalidRows.length>10?`<li>…and ${r.invalidRows.length-10} more</li>`:''}</ul>
