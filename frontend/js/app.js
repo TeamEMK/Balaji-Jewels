@@ -1465,10 +1465,36 @@ async function pmtLoadAging() {
       </div>`).join('')}
     </div>`;
   };
+  const customers = data.customers || [];
+  const custTable = !customers.length ? `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);margin-top:16px">🎉 Koi customer overdue nahi hai is date range me</div>` : `
+    <div style="font-size:13px;font-weight:700;margin:20px 0 8px">👥 Customer-wise Aging (${customers.length}) — sabse zyada overdue upar</div>
+    <div style="background:var(--card);border-radius:12px;border:1px solid var(--border);overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap">
+        <thead><tr style="text-align:left">
+          <th rowspan="2" style="padding:8px 10px;background:var(--muted);vertical-align:bottom">Client</th>
+          <th colspan="${data.buckets.length}" style="padding:6px 10px;background:color-mix(in srgb,#c9a227 12%,var(--muted));text-align:center;color:#c9a227">🥇 Gold (days overdue)</th>
+          <th colspan="${data.buckets.length}" style="padding:6px 10px;background:color-mix(in srgb,#4a90d9 12%,var(--muted));text-align:center;color:#4a90d9">💎 Diamond (days overdue)</th>
+          <th rowspan="2" style="padding:8px 10px;background:var(--muted);text-align:right;vertical-align:bottom">Total</th>
+        </tr>
+        <tr style="text-align:right">
+          ${data.buckets.map(b => `<th style="padding:6px 10px;background:var(--muted);font-weight:400;color:var(--muted-foreground)">${b}</th>`).join('')}
+          ${data.buckets.map(b => `<th style="padding:6px 10px;background:var(--muted);font-weight:400;color:var(--muted-foreground)">${b}</th>`).join('')}
+        </tr></thead>
+        <tbody>${customers.map(c => `
+          <tr style="cursor:pointer" onclick="pmtDrillCustomer(${c.clientId})" title="Click to see this client's ledger">
+            <td style="padding:8px 10px;font-weight:600;color:var(--primary);text-decoration:underline dotted">${escapeHtml(c.name)}</td>
+            ${data.buckets.map(b => `<td style="padding:8px 10px;text-align:right;${c.gold[b]?'color:#c9a227;font-weight:600':'color:var(--muted-foreground)'}">${c.gold[b] ? pmtMoney(c.gold[b]) : '—'}</td>`).join('')}
+            ${data.buckets.map(b => `<td style="padding:8px 10px;text-align:right;${c.diamond[b]?'color:#4a90d9;font-weight:600':'color:var(--muted-foreground)'}">${c.diamond[b] ? pmtMoney(c.diamond[b]) : '—'}</td>`).join('')}
+            <td style="padding:8px 10px;text-align:right;font-weight:700">${pmtMoney(c.goldTotal + c.diamondTotal)}</td>
+          </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+
   box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px">
     ${bucketTable('🥇 Gold — Overdue Aging', data.gold, '#c9a227')}
     ${bucketTable('💎 Diamond — Overdue Aging', data.diamond, '#4a90d9')}
-  </div>`;
+  </div>
+  ${custTable}`;
 }
 
 async function pmtLoadCustomers() {
@@ -1643,7 +1669,7 @@ async function confirmFmsSync() {
   try {
     const res = await api('/api/payments/bills/confirm-fms', 'POST', { rows: r.rows, mapping });
     if (res.error) { showToast(res.error, 'error'); return; }
-    showToast(`✅ ${res.imported} bill(s) imported!${res.createdClients ? ` ${res.createdClients} new client account(s) created.` : ''}${res.skipped ? ` (${res.skipped} row(s) skipped)` : ''}`);
+    showToast(`✅ ${res.imported} bill(s) imported!${res.createdClients ? ` ${res.createdClients} new client account(s) created.` : ''}${res.termsSynced ? ` ${res.termsSynced} client(s)' payment terms synced from sheet.` : ''}${res.skipped ? ` (${res.skipped} row(s) skipped)` : ''}`);
     closeModal('pmtFmsConfirmModal');
     _pmtFmsPreview = null;
     pmtGenerate();

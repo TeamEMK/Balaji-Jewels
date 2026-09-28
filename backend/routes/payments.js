@@ -163,6 +163,12 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
             const iDiamond = find(/diamond.*(amount|value|amt)|(amount|value).*diamond/i);
             const iDate = find(/bill.*date|invoice.*date/i);
             const iBillNo = find(/bill\s*no|invoice\s*no/i);
+            // Gold/Diamond Terms (payment ke din) — agar sheet me hon to
+            // seedha wahi se client ke payment terms bhi set ho jaate hain,
+            // sainkdon clients ke liye ⚙️ Client Terms me manually bharna
+            // nahi padta.
+            const iGoldTerms = find(/gold.*terms|terms.*gold/i);
+            const iDiamondTerms = find(/diamond.*terms|terms.*diamond/i);
             if (iClient < 0 || iDate < 0 || (iGold < 0 && iDiamond < 0)) { skippedSheets.push(fmsName); continue; }
 
             for (let i = headerRowIdx + 1; i < data.length; i++) {
@@ -185,7 +191,13 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
               const gold = goldP.value, diamond = diamondP.value;
               if (gold <= 0 && diamond <= 0) continue;
               const billNo = iBillNo >= 0 ? (row[iBillNo] || '').toString().trim() : '';
-              rows.push({ clientName, billNo, billDate: planDate, gold, diamond, fmsRef: `${sheet.id}:${tabName}:${i + 1}` });
+              const goldTermsRaw = iGoldTerms >= 0 ? parseInt((row[iGoldTerms] || '').toString().replace(/[^0-9]/g, ''), 10) : NaN;
+              const diamondTermsRaw = iDiamondTerms >= 0 ? parseInt((row[iDiamondTerms] || '').toString().replace(/[^0-9]/g, ''), 10) : NaN;
+              rows.push({
+                clientName, billNo, billDate: planDate, gold, diamond, fmsRef: `${sheet.id}:${tabName}:${i + 1}`,
+                goldDays: isNaN(goldTermsRaw) ? null : goldTermsRaw,
+                diamondDays: isNaN(diamondTermsRaw) ? null : diamondTermsRaw,
+              });
             }
           } catch (e) { skippedSheets.push(sheet.fms_name || sheet.sheet_name); }
         }
@@ -276,6 +288,10 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
       // no-op update par 0), isliye reliably distinguish nahi ho sakta. Ek
       // hi "processed" count zyada bharosemand hai.
       let processed = 0, skipped = 0;
+      // Har client ka LATEST (sabse recent bill date wala) Gold/Diamond
+      // Terms — sheet me row-dar-row terms hote hain, isliye sabse naya
+      // wala hi asli/current term maana jaata hai.
+      const latestTermsByClient = {}; // clientId -> {billDate, goldDays, diamondDays}
       for (const r of rows) {
         const key = _normName(r.clientName);
         const clientId = clientIdByKey[key];
@@ -288,9 +304,31 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
              gold_amount = EXCLUDED.gold_amount, diamond_amount = EXCLUDED.diamond_amount`,
           [clientId, r.billNo || '', r.billDate, r.gold || 0, r.diamond || 0, r.fmsRef, req.session.userId]);
         processed++;
+
+        if (r.goldDays != null || r.diamondDays != null) {
+          const cur = latestTermsByClient[clientId];
+          if (!cur || r.billDate > cur.billDate) {
+            latestTermsByClient[clientId] = { billDate: r.billDate, goldDays: r.goldDays, diamondDays: r.diamondDays };
+          }
+        }
       }
 
-      res.json({ imported: processed, skipped, createdClients });
+      // Sheet se mile terms ab client_payment_terms me upsert — jo bhi
+      // column mila hai wahi update hota hai, doosra jaisa tha waisa rehta
+      // hai (agar sheet me sirf Gold Terms hai to Diamond wala nahi badalta).
+      let termsSynced = 0;
+      for (const [clientId, t] of Object.entries(latestTermsByClient)) {
+        await db.query(
+          `INSERT INTO client_payment_terms (user_id,gold_days,diamond_days) VALUES (?,?,?)
+           ON CONFLICT (user_id) DO UPDATE SET
+             gold_days = COALESCE(EXCLUDED.gold_days, gold_days),
+             diamond_days = COALESCE(EXCLUDED.diamond_days, diamond_days),
+             updated_at = NOW()`,
+          [clientId, t.goldDays, t.diamondDays]);
+        termsSynced++;
+      }
+
+      res.json({ imported: processed, skipped, createdClients, termsSynced });
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
   });
 
@@ -361,7 +399,10 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
   });
 
-  // ── c) Aging Summary — gold aur diamond pending, alag-alag bucket me ──
+  // ── c) Aging Summary — gold aur diamond pending, alag-alag bucket me.
+  // Company-wide totals ke saath-saath per-customer breakdown bhi (kis
+  // client ka kitna kaunse bucket me pending hai) — sirf jinka kuch overdue
+  // hai, sabse zyada overdue wale upar. ──
   app.get('/api/payments/aging', requireAuth, requireAdmin, async (req, res) => {
     try {
       const { start, end } = req.query;
@@ -369,21 +410,41 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
       let where = [], params = [];
       if (start && end) { where.push('bill_date BETWEEN ? AND ?'); params.push(start, end); }
       const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
-      const [bills] = await db.query(`SELECT * , TO_CHAR(bill_date,'YYYY-MM-DD') AS bill_date_iso FROM client_bills ${whereSql}`, params);
+      const [bills] = await db.query(
+        `SELECT b.*, u.name AS client_name, TO_CHAR(b.bill_date,'YYYY-MM-DD') AS bill_date_iso
+         FROM client_bills b JOIN users u ON b.client_user_id=u.id ${whereSql}`, params);
       const termsMap = await getTermsMap();
 
       const bucketOf = (days) => days <= 30 ? '0-30' : days <= 60 ? '30-60' : days <= 90 ? '60-90' : days <= 120 ? '90-120' : '120+';
       const buckets = ['0-30', '30-60', '60-90', '90-120', '120+'];
       const gold = Object.fromEntries(buckets.map(b => [b, 0]));
       const diamond = Object.fromEntries(buckets.map(b => [b, 0]));
+      const byClient = {};
 
       for (const b of bills) {
         const st = billStatus({ ...b, bill_date: b.bill_date_iso }, termsMap[b.client_user_id], today);
-        if (st.goldIsDue) gold[bucketOf(st.goldOverdueDays)] += st.goldPending;
-        if (st.diamondIsDue) diamond[bucketOf(st.diamondOverdueDays)] += st.diamondPending;
+        if (!byClient[b.client_user_id]) {
+          byClient[b.client_user_id] = {
+            clientId: b.client_user_id, name: b.client_name,
+            gold: Object.fromEntries(buckets.map(k => [k, 0])),
+            diamond: Object.fromEntries(buckets.map(k => [k, 0])),
+            goldTotal: 0, diamondTotal: 0,
+          };
+        }
+        const c = byClient[b.client_user_id];
+        if (st.goldIsDue) { const bk = bucketOf(st.goldOverdueDays); gold[bk] += st.goldPending; c.gold[bk] += st.goldPending; c.goldTotal += st.goldPending; }
+        if (st.diamondIsDue) { const bk = bucketOf(st.diamondOverdueDays); diamond[bk] += st.diamondPending; c.diamond[bk] += st.diamondPending; c.diamondTotal += st.diamondPending; }
       }
       const round2 = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v * 100) / 100]));
-      res.json({ buckets, gold: round2(gold), diamond: round2(diamond) });
+      const customers = Object.values(byClient)
+        .filter(c => c.goldTotal > 0 || c.diamondTotal > 0)
+        .map(c => ({
+          clientId: c.clientId, name: c.name, gold: round2(c.gold), diamond: round2(c.diamond),
+          goldTotal: Math.round(c.goldTotal * 100) / 100, diamondTotal: Math.round(c.diamondTotal * 100) / 100,
+        }))
+        .sort((a, b) => (b.goldTotal + b.diamondTotal) - (a.goldTotal + a.diamondTotal));
+
+      res.json({ buckets, gold: round2(gold), diamond: round2(diamond), customers });
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error. Please try again.' }); }
   });
 
