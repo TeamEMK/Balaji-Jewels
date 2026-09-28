@@ -166,9 +166,14 @@ module.exports = function registerPaymentsRoutes(app, ctx) {
             // Gold/Diamond Terms (payment ke din) — agar sheet me hon to
             // seedha wahi se client ke payment terms bhi set ho jaate hain,
             // sainkdon clients ke liye ⚙️ Client Terms me manually bharna
-            // nahi padta.
-            const iGoldTerms = find(/gold.*terms|terms.*gold/i);
-            const iDiamondTerms = find(/diamond.*terms|terms.*diamond/i);
+            // nahi padta. Header ka naam se pehle try karo; na mile to
+            // column J (index 9) / K (index 10) par seedha fall back karo —
+            // "Updated Payment Collection FMS" sheet me Gold Terms(In Days)
+            // hamesha J aur Diamond Terms(In Days) hamesha K me hoti hai.
+            let iGoldTerms = find(/gold.*terms|terms.*gold/i);
+            let iDiamondTerms = find(/diamond.*terms|terms.*diamond/i);
+            if (iGoldTerms < 0 && headers.length > 9) iGoldTerms = 9;   // column J
+            if (iDiamondTerms < 0 && headers.length > 10) iDiamondTerms = 10; // column K
             if (iClient < 0 || iDate < 0 || (iGold < 0 && iDiamond < 0)) { skippedSheets.push(fmsName); continue; }
 
             for (let i = headerRowIdx + 1; i < data.length; i++) {
