@@ -3607,15 +3607,14 @@ app.get('/api/fms-tasks/:fmsId/summary', requireAuth, async (req, res) => {
   }
 });
 
-// Mark row as done — writes actual (date only) + delay reason to sheet
+// Mark row as done — writes actual (date + time) + delay reason to sheet.
+// Pehle time strip karke sirf date save hoti thi — ab poora timestamp
+// (jo frontend bhejta hai, DD/MM/YYYY HH:MM:SS) as-is sheet me jaata hai.
 app.post('/api/fms-tasks/:fmsId/steps/:stepId/done', requireAuth, async (req, res) => {
   try {
     const { rowNumber, actualValue, delayReason, extraInputs, planValue } = req.body;
     if (!rowNumber || !actualValue) return res.status(400).json({ error: 'rowNumber and actualValue required' });
-    // Strip time portion — save only date (DD-MM-YYYY) to Google Sheet
-    let dateOnlyValue = actualValue;
-    const dtMatch = actualValue.match(/^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/);
-    if (dtMatch) dateOnlyValue = dtMatch[1];
+    const dateOnlyValue = actualValue;
 
     const [sheets] = await db.query('SELECT * FROM fms_sheets WHERE id=?', [req.params.fmsId]);
     if (!sheets[0]) return res.status(404).json({ error: 'FMS not found' });

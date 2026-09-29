@@ -9130,11 +9130,13 @@ function openFMSDoneModal(rowIdx) {
   // Set plan display
   document.getElementById('fmsDonePlanDisplay').textContent = row.planValue || '—';
 
-  // Set actual = today's date only (DD/MM/YYYY) — no timestamp saved to sheet
+  // Actual = poora timestamp (date + time), jaisa reference app me tha —
+  // pehle sirf date save hoti thi, time hata diya jaata tha (isi wajah se
+  // "actual me time nahi dikhta" wali shikayat thi). Format app ke apne
+  // DD/MM/YYYY convention ke saath consistent rakha, bas time jod diya.
   const now = new Date();
   const pad = n => String(n).padStart(2,'0');
-  const dateOnlyStr = `${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()}`;
-  const actualStr = dateOnlyStr; // Only date saved to sheet
+  const actualStr = `${pad(now.getDate())}/${pad(now.getMonth()+1)}/${now.getFullYear()} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
   document.getElementById('fmsDoneActualDisplay').textContent = actualStr;
 
   // Check delay: actual > plan = delayed
