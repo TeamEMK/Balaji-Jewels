@@ -5020,6 +5020,10 @@ async function saveUser() {
   const r = id ? await api(`/api/users/${id}`,'PUT',body) : await api('/api/users','POST',body);
   if (r.error) { err.textContent=r.error; err.style.display='block'; return; }
   closeModal('userModal');
+  // Edit karne par session turant expire ho jaata hai (role/access turant
+  // lagu ho jaaye isliye) — us user ko dobara login karna padega, warna
+  // naya role turant kaam nahi karega.
+  showToast(id ? '✅ User updated! Unhe logout karke dobara login karna hoga — tabhi naya role/access lagu hoga.' : '✅ User added!');
   loadUsers();
 }
 

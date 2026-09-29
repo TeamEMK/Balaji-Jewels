@@ -46,9 +46,16 @@ module.exports = function registerUsersRoutes(app, ctx) {
       if (viewOnly && String(req.params.id) === String(req.session.userId)) {
         return res.status(400).json({ error: 'You cannot set yourself to view-only — you would not be able to change it back.' });
       }
+      // session_version HAMESHA bump — role/view_only jaisi cheezein JWT me
+      // login ke waqt hi embed ho jaati hain (requireAuth token se seedha role
+      // padhta hai, DB se nahi), isliye role badalne ke baad bhi purana token
+      // purana role hi leke chalta rehta jab tak use force-logout na kiya
+      // jaaye. Pehle sirf password-change par bump hota tha — isi wajah se
+      // "admin bana diya par access nahi mila" wali dikkat aati thi, jab tak
+      // wo user khud logout-login na kare.
       if (password) await db.query('UPDATE users SET name=?,email=?,notification_email=?,role=?,view_only=?,password=?,phone=?,department=?,week_off=?,extra_off=?,staff_type=?,session_version=session_version+1 WHERE id=?',
         [name,email,notification_email||'',role,viewOnly,bcrypt.hashSync(password,10),phone||null,department||'',week_off||'',extra_off||'',staffType,req.params.id]);
-      else await db.query('UPDATE users SET name=?,email=?,notification_email=?,role=?,view_only=?,phone=?,department=?,week_off=?,extra_off=?,staff_type=? WHERE id=?',
+      else await db.query('UPDATE users SET name=?,email=?,notification_email=?,role=?,view_only=?,phone=?,department=?,week_off=?,extra_off=?,staff_type=?,session_version=session_version+1 WHERE id=?',
         [name,email,notification_email||'',role,viewOnly,phone||null,department||'',week_off||'',extra_off||'',staffType,req.params.id]);
       // requireAuth session_version aur view_only ko kuch second cache karta hai.
       // Yahin dono badal sakte hain, isliye cache turant saaf — warna
