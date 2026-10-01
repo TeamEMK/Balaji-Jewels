@@ -24,7 +24,7 @@
     "googleapis": "^171.4.0",
     "jsonwebtoken": "^9.0.3",
     "mysql2": "^3.24.3",
-    "nodemailer": "^6.9.16",
+    "nodemailer": "^10.0.13",
     "pdfkit": "^0.19.1",
     "pg": "^8.22.0"
   },
