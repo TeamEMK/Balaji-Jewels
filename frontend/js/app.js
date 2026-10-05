@@ -3742,17 +3742,12 @@ function renderTasksTable() {
     return;
   }
 
-  // Pending/Completed/All pe click karte hi 100-1000+ tasks ek saath render
-  // hote the (sab doer-groups khule, har task ka poora <tr> + buttons banate)
-  // — isi se click "slow/delayed" lagta tha, khaaskar Completed/All me jahan
-  // purana saara history jama hota hai. Ab ek page me max ALL_TASKS_PAGE_SIZE
-  // tasks hi render hote hain, Prev/Next se aage-peeche jao.
-  const totalFilteredCount = tasks.length;
-  const totalPages = Math.max(1, Math.ceil(totalFilteredCount / ALL_TASKS_PAGE_SIZE));
-  if (allTasksPage > totalPages) allTasksPage = totalPages;
-  if (allTasksPage < 1) allTasksPage = 1;
-  const pageStart = (allTasksPage - 1) * ALL_TASKS_PAGE_SIZE;
-  const pagedTasks = tasks.slice(pageStart, pageStart + ALL_TASKS_PAGE_SIZE);
+  // Pagination yahan se hata di — doer ke hisaab se collapsed-by-default groups
+  // already render ko halka rakhte hain (bina khole task-rows banti hi nahi),
+  // aur page-split karne se ek real bug ban raha tha: task Done/refresh hote
+  // hi list ka size badal jaata, jisse doer ka position kisi DOOSRE page pe
+  // shift ho jaata aur wo poora group "gayab" lagta (asal me agle/pichle
+  // page pe chala jaata). Sab doers ek hi page pe, naam se sorted.
 
   const isChecklist = tasksType === 'checklist';
 
@@ -3823,9 +3818,9 @@ function renderTasksTable() {
     </tr>`;
   }
 
-  // Group by doer (assigned_to) — sirf current page ke tasks group hote hain
+  // Group by doer (assigned_to)
   const groups = {};
-  pagedTasks.forEach(t => {
+  tasks.forEach(t => {
     const key = String(t.assigned_to ?? t.assignedToId ?? t.assignedToName);
     if (!groups[key]) groups[key] = { id: key, name: t.assignedToName || 'Unknown', tasks: [] };
     groups[key].tasks.push(t);
@@ -3866,24 +3861,16 @@ function renderTasksTable() {
       </div>`;
   }).join('');
 
-  const pagerHtml = totalPages > 1 ? `
-    <div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:14px 18px">
-      <button class="btn btn-outline btn-sm" onclick="tasksPrevPage()" ${allTasksPage<=1?'disabled':''}>◀ Prev</button>
-      <span style="font-size:12px;color:var(--muted-foreground)">Page ${allTasksPage} of ${totalPages}</span>
-      <button class="btn btn-outline btn-sm" onclick="tasksNextPage()" ${allTasksPage>=totalPages?'disabled':''}>Next ▶</button>
-    </div>` : '';
-
   container.innerHTML = `
     <div class="flat-tasks-table">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--muted)">
-        <span style="font-size:13px;color:var(--muted-foreground)">${groupList.length} doers · ${pagedTasks.length} of ${totalFilteredCount} tasks${totalPages>1?` (page ${allTasksPage}/${totalPages})`:''}</span>
+        <span style="font-size:13px;color:var(--muted-foreground)">${groupList.length} doers · ${tasks.length} tasks</span>
         <div style="display:flex;gap:8px">
           <button class="btn btn-outline btn-sm" onclick="expandAllDoers()">Expand all</button>
           <button class="btn btn-outline btn-sm" onclick="collapseAllDoers()">Collapse all</button>
         </div>
       </div>
       ${groupsHtml}
-      ${pagerHtml}
     </div>`;
 }
 
