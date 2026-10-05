@@ -3447,7 +3447,10 @@ async function loadAllTasks() {
       const prevVal = userSel.value;
       const uniqueUsers = {};
       allTasks.forEach(t => {
-        if (t.assignedToId && t.assignedToName) uniqueUsers[t.assignedToId] = t.assignedToName;
+        // Delegation/Checklist API 'assigned_to' (snake_case) bhejta hai,
+        // 'assignedToId' naam ka field kabhi exist hi nahi karta tha — isi
+        // wajah se dropdown hamesha khaali (sirf "All Employees") rehta tha.
+        if (t.assigned_to && t.assignedToName) uniqueUsers[t.assigned_to] = t.assignedToName;
       });
       userSel.innerHTML = '<option value="all">All Employees</option>';
       Object.entries(uniqueUsers).sort((a,b)=>a[1].localeCompare(b[1])).forEach(([id,name]) => {
@@ -3725,7 +3728,7 @@ function renderTasksTable() {
       (t.remarks||'').toLowerCase().includes(search) ||
       (t.status||'').toLowerCase().includes(search) ||
       (t.priority||'').toLowerCase().includes(search);
-    const matchUser = userFilterVal === 'all' || String(t.assignedToId) === String(userFilterVal);
+    const matchUser = userFilterVal === 'all' || String(t.assigned_to) === String(userFilterVal);
     const matchDateFrom = !dateFrom || (t.due_date && t.due_date >= dateFrom);
     const matchDateTo = !dateTo || (t.due_date && t.due_date <= dateTo);
     return matchStatus && matchSearch && matchUser && matchDateFrom && matchDateTo;
