@@ -3368,6 +3368,11 @@ function setDashTasks(dDel, dChl) {
 // ══════════════════════════════════════════════════════
 let allTasksData = [];
 let taskStatusFilter = 'pending';
+// API fail hone par silently "No tasks found" dikh jaata tha, jaise koi data
+// hi nahi — asli wajah (server/network error) kahin dikhti nahi thi. Ab yahan
+// store karte hain taaki renderTasksTable() "No tasks found" ki jagah asli
+// error dikha sake.
+let _tasksLoadError = '';
 
 let allTasksPage = 1;
 const ALL_TASKS_PAGE_SIZE = 50;
@@ -3409,6 +3414,7 @@ async function loadAllTasks() {
     const empVal = document.getElementById('tasksUserFilter')?.value || 'all';
     const canFilter = isAdmin || isHod || isPC;
     const fms = await api(`/api/fms-dashboard${canFilter ? `?employee=${empVal}` : ''}`);
+    _tasksLoadError = (fms && fms.error) ? fms.error : '';
     _fmsTasksRows = (fms && !fms.error && Array.isArray(fms.rows)) ? fms.rows : [];
     allTasksData = [];
     allTasksPage = 1;
@@ -3418,6 +3424,7 @@ async function loadAllTasks() {
 
   // includeFuture=1 — warna server checklist ke future tasks chhupa deta hai aur Upcoming tab hamesha khali rehta
   const data = await api(withSeg(`/api/tasks?type=${tasksType}&includeFuture=1`));
+  _tasksLoadError = (data && data.error) ? data.error : '';
 
   // Flatten all tasks — admin, HOD and PC get grouped response
   let allTasks = [];
@@ -3555,6 +3562,12 @@ function renderFmsTasksTable() {
   const dateFrom = document.getElementById('tasksDateFrom')?.value || '';
   const dateTo = document.getElementById('tasksDateTo')?.value || '';
 
+  if (_tasksLoadError) {
+    container.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--destructive);color:var(--destructive)">⚠️ FMS tasks load nahi ho paaye: ${_tasksLoadError}</div>`;
+    _lastDoerIds = [];
+    return;
+  }
+
   const rows = _fmsTasksRows.filter(t => {
     const matchSearch = !search ||
       (t.fmsName||'').toLowerCase().includes(search) ||
@@ -3658,6 +3671,14 @@ function renderTasksTable() {
   const dateTo = document.getElementById('tasksDateTo')?.value || '';
   const container = document.getElementById('tasksContent');
   const today = new Date().toISOString().split('T')[0];
+
+  // Data load hi fail hui thi (server/network error) — "No tasks found" ki
+  // jagah asli wajah dikhao, warna khaali list real "no data" jaisi lagti hai.
+  if (_tasksLoadError) {
+    container.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--destructive);color:var(--destructive)">⚠️ Tasks load nahi ho paaye: ${_tasksLoadError}</div>`;
+    _lastDoerIds = [];
+    return;
+  }
 
   let tasks = allTasksData.filter(t => {
     const matchStatus =
