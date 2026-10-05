@@ -430,7 +430,7 @@ function setMinDates() {
 // ══════════════════════════════════════════════════════
 // NAVIGATION
 // ══════════════════════════════════════════════════════
-const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',payments:'Payments',query:'Query','help-tickets':'Help Ticket',users:'Users',profile:'Profile',mis:'MIS Report',score360:'360° Score',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client'};
+const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',payments:'Payments',query:'Query','help-tickets':'Help Ticket',users:'Users',profile:'Profile',mis:'MIS Report',score360:'360° Score',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client',forms:'Forms'};
 
 // Sidebar par cursor jaate hi (jab wo expand hone lagta hai) koi bhi khula dropdown
 // band kar do — warna native select popup sidebar ke upar overlap dikhta hai.
@@ -522,6 +522,7 @@ function navigate(page, el) {
   if (page==='query') loadQueries();
   if (page==='help-tickets') loadHelpTickets();
   if (page==='records') loadRecords();
+  if (page==='forms') loadForms();
   // navigate() core app ka hissa hai, yaani client ki copy me bhi jaata hai —
   // par ncLoadLog generator ke markers ke andar hai aur wahan hota hi nahi.
   // Isliye seedha bulane ke bajaye pehle dekh lete hain ki function hai ya nahi.
@@ -2613,6 +2614,110 @@ async function resolveHelpTicket() {
   closeModal('resolveHtModal');
   showToast('✅ Marked resolved!');
   loadHelpTickets();
+}
+
+// ══════════════════════════════════════════════════════
+// QUICK FORMS — naam + link add karo, sidebar se ek click me khulta hai.
+// Koi role-restriction nahi — har logged-in user add/edit/delete kar sakta hai.
+// ══════════════════════════════════════════════════════
+let _quickForms = [];
+
+async function loadForms() {
+  const box = document.getElementById('formsContent');
+  box.innerHTML = '<div style="padding:20px;color:var(--muted-foreground);font-size:13px;text-align:center">Loading…</div>';
+  const data = await api('/api/forms');
+  if (data.error) { box.innerHTML = `<div style="padding:20px;color:var(--destructive)">${escapeHtml(data.error)}</div>`; return; }
+  _quickForms = Array.isArray(data) ? data : [];
+  if (!_quickForms.length) {
+    box.innerHTML = '<div style="padding:30px;color:var(--muted-foreground);font-size:13px;text-align:center">No forms added yet — click "+ Add Form" to add one.</div>';
+    return;
+  }
+  box.innerHTML = _quickForms.map(_renderFormCard).join('');
+}
+
+function _renderFormCard(f) {
+  const safeLink = escapeHtml(f.link);
+  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--card)">
+    <div style="min-width:0">
+      <div style="font-weight:600;font-size:14px;color:var(--foreground)">${escapeHtml(f.name)}</div>
+      <div style="font-size:11px;color:var(--muted-foreground);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${safeLink}</div>
+      <div style="font-size:10px;color:var(--muted-foreground);margin-top:3px">Added by ${escapeHtml(f.addedByName || '')}</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+      <button class="btn btn-primary btn-sm" onclick="openQuickForm(${f.id})">Open ↗</button>
+      <button title="Edit" onclick="openEditFormModal(${f.id})" style="background:none;border:none;cursor:pointer;color:var(--chart-1);font-size:14px;padding:4px;line-height:1">✏️</button>
+      <button title="Delete" onclick="deleteQuickForm(${f.id})" style="background:none;border:none;cursor:pointer;color:var(--destructive);font-size:14px;padding:4px;line-height:1">🗑</button>
+    </div>
+  </div>`;
+}
+
+function openQuickForm(id) {
+  const f = _quickForms.find(x => x.id === id);
+  if (!f) return;
+  window.open(f.link, '_blank', 'noopener');
+}
+
+let _editFormId = null; // null = naya; warna is form ko edit kar rahe hain
+function openAddFormModal() {
+  _editFormId = null;
+  document.getElementById('formModalTitle').textContent = '🔗 Add Form';
+  document.getElementById('saveFormBtn').textContent = 'Save';
+  document.getElementById('formModalErr').style.display = 'none';
+  document.getElementById('formId').value = '';
+  document.getElementById('formName').value = '';
+  document.getElementById('formLink').value = '';
+  document.getElementById('formModal').classList.add('open');
+  setTimeout(() => document.getElementById('formName').focus(), 50);
+}
+
+function openEditFormModal(id) {
+  const f = _quickForms.find(x => x.id === id);
+  if (!f) return;
+  _editFormId = id;
+  document.getElementById('formModalTitle').textContent = '✏️ Edit Form';
+  document.getElementById('saveFormBtn').textContent = 'Save Changes';
+  document.getElementById('formModalErr').style.display = 'none';
+  document.getElementById('formId').value = id;
+  document.getElementById('formName').value = f.name || '';
+  document.getElementById('formLink').value = f.link || '';
+  document.getElementById('formModal').classList.add('open');
+  setTimeout(() => document.getElementById('formName').focus(), 50);
+}
+
+let _formSubmitting = false;
+async function saveForm() {
+  if (_formSubmitting) return;
+  const err = document.getElementById('formModalErr');
+  err.style.display = 'none';
+  const name = document.getElementById('formName').value.trim();
+  const link = document.getElementById('formLink').value.trim();
+  if (!name) { err.textContent = 'Form name is required.'; err.style.display = 'block'; return; }
+  if (!link) { err.textContent = 'Form link is required.'; err.style.display = 'block'; return; }
+  const isEdit = !!_editFormId;
+  const btn = document.getElementById('saveFormBtn');
+  _formSubmitting = true;
+  if (btn) { btn.disabled = true; btn.textContent = isEdit ? 'Saving…' : 'Adding…'; }
+  try {
+    const r = isEdit
+      ? await api(`/api/forms/${_editFormId}`, 'PUT', { name, link })
+      : await api('/api/forms', 'POST', { name, link });
+    if (r.error) { err.textContent = r.error; err.style.display = 'block'; return; }
+    closeModal('formModal');
+    showToast(isEdit ? '✅ Form updated!' : '✅ Form added!');
+    _editFormId = null;
+    loadForms();
+  } finally {
+    _formSubmitting = false;
+    if (btn) { btn.disabled = false; btn.textContent = isEdit ? 'Save Changes' : 'Save'; }
+  }
+}
+
+async function deleteQuickForm(id) {
+  if (!await confirmDialog('Delete this form permanently? This cannot be undone.', { title: 'Delete Form', okText: 'Delete', danger: true })) return;
+  const r = await api(`/api/forms/${id}`, 'DELETE');
+  if (r.error) { showToast(r.error, 'error'); return; }
+  showToast('Form deleted');
+  loadForms();
 }
 
 // ══════════════════════════════════════════════════════

@@ -91,6 +91,10 @@
       <span class="nav-label-text">Help Ticket</span>
       <span id="helpTicketBadge" style="display:none;position:absolute;top:6px;right:8px;background:var(--destructive);color:#fff;border-radius:50%;width:16px;height:16px;font-size:10px;font-weight:700;align-items:center;justify-content:center">0</span>
     </div>
+    <div class="nav-item" id="nav-forms" onclick="navigate('forms',this)">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      <span class="nav-label-text">Forms</span>
+    </div>
     <div class="nav-item" id="nav-users" style="display:none" onclick="navigate('users',this)">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
       <span class="nav-label-text">Users</span>
@@ -905,6 +909,19 @@
     </div>
     <div id="helpTicketInfo" style="background:var(--muted);border:1px solid color-mix(in srgb,var(--chart-1) 22%,transparent);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:var(--chart-1)"></div>
     <div id="helpTicketContent"></div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       QUICK FORMS — koi bhi form ka naam+link add karke sidebar se ek click
+       me khol sakta hai. Koi role-restriction nahi, sab add/edit/delete kar
+       sakte hain.
+  ══════════════════════════════════════ -->
+  <div id="page-forms" class="page">
+    <div class="page-header">
+      <div></div>
+      <button class="btn btn-primary" onclick="openAddFormModal()">+ Add Form</button>
+    </div>
+    <div id="formsContent"></div>
   </div>
 
   <!-- ══════════════════════════════════════
@@ -2250,6 +2267,27 @@
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
       <button class="btn btn-outline" onclick="closeModal('newHelpTicketModal')">Cancel</button>
       <button id="sendHtBtn" class="btn btn-primary btn-sm" onclick="submitHelpTicket()">Send Ticket</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ ADD / EDIT QUICK FORM ══ -->
+<div class="modal-overlay" id="formModal">
+  <div class="modal" style="max-width:480px">
+    <h3 id="formModalTitle">🔗 Add Form</h3>
+    <div class="alert error" id="formModalErr"></div>
+    <input type="hidden" id="formId"/>
+    <div class="form-group">
+      <label>Form Name</label>
+      <input type="text" id="formName" placeholder="e.g. Leave Application Form"/>
+    </div>
+    <div class="form-group">
+      <label>Form Link</label>
+      <input type="text" id="formLink" placeholder="https://..."/>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+      <button class="btn btn-outline" onclick="closeModal('formModal')">Cancel</button>
+      <button id="saveFormBtn" class="btn btn-primary btn-sm" onclick="saveForm()">Save</button>
     </div>
   </div>
 </div>
