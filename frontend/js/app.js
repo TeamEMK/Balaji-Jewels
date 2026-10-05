@@ -3473,7 +3473,7 @@ function filterTasks() { allTasksPage = 1; renderTasksTable(); }
 
 function filterTaskStatus(status) {
   taskStatusFilter = status;
-  collapsedDoers.clear();
+  expandedDoers.clear();
   allTasksPage = 1;
   syncTaskTabs();
   renderTasksTable();
@@ -3505,23 +3505,23 @@ function syncTaskTabs() {
   document.getElementById(typeTabId)?.classList.add('active');
 }
 
-// Pehle groups DEFAULT me collapsed rehte the (expandedDoers khaali = sab
-// band) — tab/status switch karte hi ye Set clear ho jaata, matlab har baar
-// wapas aane par sirf naam dikhte, tasks click karke kholni padti. Isi wajah
-// se lagta tha "task pe click kiya to gayab ho gayi, dobara nahi dikhi" —
-// asal me task collapse ho jaati thi aur tab switch par fir se collapsed
-// state me reset ho jaati. Ab ulta rakha hai: collapsedDoers me sirf WO
-// doer hote hain jinhe user ne khud band kiya ho — baaki sab by-default
-// khule (visible) rehte hain.
-let collapsedDoers = new Set();
+// Doer-groups by-default COLLAPSED rehte hain (sirf naam + total/pending
+// count dikhta hai, jaisa reference app me hai) — click karke kholo to us
+// doer ki tasks niche dikhti hain. expandedDoers me sirf WO doer hote hain
+// jinhe user ne khud khola ho. Tab/status switch par ye Set clear hoti hai
+// (naya data load ho raha hai, isliye wapas collapsed state se shuru) —
+// lekin ek hi tab/status pe rehte hue koi task Done/Edit/Delete karne se
+// (jo list ko refresh karta hai) ye Set clear NAHI hoti, isliye jo doer
+// khula tha wo khula hi rehta hai, achanak collapse/gayab nahi hota.
+let expandedDoers = new Set();
 let _lastDoerIds = [];
 
 function toggleDoerGroup(id) {
-  if (collapsedDoers.has(id)) collapsedDoers.delete(id); else collapsedDoers.add(id);
+  if (expandedDoers.has(id)) expandedDoers.delete(id); else expandedDoers.add(id);
   renderTasksTable();
 }
-function expandAllDoers() { collapsedDoers.clear(); renderTasksTable(); }
-function collapseAllDoers() { _lastDoerIds.forEach(id=>collapsedDoers.add(id)); renderTasksTable(); }
+function expandAllDoers() { _lastDoerIds.forEach(id=>expandedDoers.add(id)); renderTasksTable(); }
+function collapseAllDoers() { expandedDoers.clear(); renderTasksTable(); }
 
 // All Tasks → FMS tab ki pending rows (/api/fms-dashboard se)
 let _fmsTasksRows = [];
@@ -3836,7 +3836,7 @@ function renderTasksTable() {
     const pending = g.tasks.filter(t=>t.status==='pending').length;
     const revised = g.tasks.filter(t=>t.status==='revised').length;
     const completed = g.tasks.filter(t=>t.status==='completed').length;
-    const isOpen = !collapsedDoers.has(g.id);
+    const isOpen = expandedDoers.has(g.id);
     const rows = g.tasks.map(rowFor).join('');
     return `
       <div style="border-bottom:1px solid var(--muted)">
@@ -3890,7 +3890,7 @@ function tasksNextPage() { allTasksPage++; renderTasksTable(); }
 
 function tasksTab(type) {
   tasksType = type;
-  collapsedDoers.clear();
+  expandedDoers.clear();
   // Revised par rehte hue Checklist/FMS par switch kiya to list hamesha khali milti —
   // Pending par le aate hain taaki kuch to dikhe.
   if ((type === 'checklist' || type === 'fms') && taskStatusFilter === 'revised') taskStatusFilter = 'pending';
