@@ -2708,6 +2708,13 @@ async function loadDashboard() {
       document.getElementById('dashBtns').innerHTML = `
         <button class="btn btn-green" onclick="openChecklist()">+ Checklist</button>
         <button class="btn btn-primary" onclick="openDelegate()">+ Delegate</button>`;
+    } else if (isPC) {
+      // PC sabhi employees ka dashboard dekhta hai (jaise admin/hod) isliye
+      // ise bhi doosron ko task delegate karne ka button milna chahiye — pehle
+      // ye branch hi missing tha, isliye PC ke paas koi button nahi dikhta tha.
+      // Checklist button nahi — bulk-checklist endpoint abhi admin-only hai.
+      document.getElementById('dashBtns').innerHTML = `
+        <button class="btn btn-primary" onclick="openDelegate()">+ Delegate</button>`;
     } else if (ME.role === 'user') {
       document.getElementById('dashBtns').innerHTML = `
         <button class="btn btn-primary" onclick="openDelegate()">+ Assign Task</button>`;
@@ -3377,12 +3384,15 @@ async function loadAllTasks() {
   const isDesktop = window.innerWidth >= 768;
 
   // Show/hide assign task button based on role
+  // PC bhi doosron ko task assign kar sakta hai (backend /api/tasks sirf
+  // requireAuth hai, role restriction nahi) — pehle yahan isPC missing tha
+  // isliye button hi nahi dikhta tha.
   const assignBtn = document.getElementById('tasksAssignBtn');
-  if (assignBtn) assignBtn.style.display = (isAdmin || isHod || isUser) ? '' : 'none';
+  if (assignBtn) assignBtn.style.display = (isAdmin || isHod || isPC || isUser) ? '' : 'none';
 
   // Delegate by Me button — sirf un users ko dikhao jo task assign kar sakte hain
   const dbmBtn = document.getElementById('delegateByMeBtn');
-  if (dbmBtn) dbmBtn.style.display = (isAdmin || isHod || isUser) ? '' : 'none';
+  if (dbmBtn) dbmBtn.style.display = (isAdmin || isHod || isPC || isUser) ? '' : 'none';
 
   // PC desktop: show user filter + date range
   const filtersDiv = document.getElementById('tasksUserDateFilters');
