@@ -320,7 +320,7 @@
         </div>
         <div style="position:relative">
           <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted-foreground)">🔍</span>
-          <input type="text" id="taskSearch" placeholder="Search by name, date, desc, status..." oninput="filterTasks()" autocomplete="off" name="task-search-query"
+          <input type="search" id="taskSearch" placeholder="Search by name, date, desc, status..." oninput="filterTasks()" autocomplete="off" name="task-search-query" readonly onfocus="this.removeAttribute('readonly')"
             style="padding:8px 12px 8px 32px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;width:260px"/>
         </div>
         <button class="btn btn-outline" id="delegateByMeBtn" onclick="openDelegateByMeModal()"
@@ -358,7 +358,7 @@
       <div style="display:flex;align-items:center;gap:10px">
         <div style="position:relative">
           <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted-foreground)">🔍</span>
-          <input type="text" id="userSearch" placeholder="Search by name, email, dept, role…" oninput="filterUsers()" autocomplete="off" name="user-search-query"
+          <input type="search" id="userSearch" placeholder="Search by name, email, dept, role…" oninput="filterUsers()" autocomplete="off" name="user-search-query" readonly onfocus="this.removeAttribute('readonly')"
             style="padding:8px 12px 8px 32px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;width:260px"/>
         </div>
         <!-- Tabhi dikhta hai jab kam se kam ek row tick ho -->
@@ -1942,7 +1942,7 @@
     <div id="fmsUpdateStepName" style="font-size:12px;color:var(--muted-foreground);margin-bottom:12px"></div>
     <div class="alert error" id="fmsUpdateErr" style="display:none"></div>
     <div id="fmsUpdateSearchWrap" style="display:none;margin-bottom:12px">
-      <input type="text" id="fmsUpdateSearch" placeholder="Search (order no, vendor…)" oninput="renderFMSUpdateRows()" autocomplete="off" name="fms-update-search-query"
+      <input type="search" id="fmsUpdateSearch" placeholder="Search (order no, vendor…)" oninput="renderFMSUpdateRows()" autocomplete="off" name="fms-update-search-query" readonly onfocus="this.removeAttribute('readonly')"
         style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none"/>
     </div>
     <div id="fmsUpdateList"><div class="empty">Loading…</div></div>
@@ -2385,7 +2385,7 @@
       </div>
       <div style="position:relative;margin-left:auto">
         <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted-foreground)">🔍</span>
-        <input type="text" id="dbmSearch" placeholder="Search…" oninput="renderDbmTable()" autocomplete="off" name="dbm-search-query"
+        <input type="search" id="dbmSearch" placeholder="Search…" oninput="renderDbmTable()" autocomplete="off" name="dbm-search-query" readonly onfocus="this.removeAttribute('readonly')"
           style="padding:7px 12px 7px 30px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;outline:none;width:220px"/>
       </div>
     </div>

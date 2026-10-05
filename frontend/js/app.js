@@ -3583,7 +3583,9 @@ function renderFmsTasksTable() {
   _lastDoerIds = [];
 
   if (!rows.length) {
-    container.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">No pending FMS rows</div>`;
+    container.innerHTML = search
+      ? `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">No FMS rows match search "${(document.getElementById('taskSearch')?.value||'')}" — <a href="javascript:void(0)" onclick="document.getElementById('taskSearch').value='';filterTasks()">clear search</a></div>`
+      : `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">No pending FMS rows</div>`;
     return;
   }
 
@@ -3703,7 +3705,12 @@ function renderTasksTable() {
   });
 
   if (!tasks.length) {
-    container.innerHTML = `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">No tasks found</div>`;
+    // Search box me kuch bhara ho (jaise browser ne email autofill kar diya)
+    // to saaf bata do ki search ki wajah se khaali hai — warna lagta hai jaise
+    // koi data hi nahi hai.
+    container.innerHTML = search
+      ? `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">No tasks match search "${(document.getElementById('taskSearch')?.value||'')}" — <a href="javascript:void(0)" onclick="document.getElementById('taskSearch').value='';filterTasks()">clear search</a></div>`
+      : `<div class="empty" style="background:var(--card);border-radius:12px;border:1px solid var(--border);">No tasks found</div>`;
     _lastDoerIds = [];
     return;
   }
