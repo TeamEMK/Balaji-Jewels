@@ -470,9 +470,9 @@ function isPageDisabled(page) { return DISABLED_PAGES[page] === true; }
 // upload modals aur purana data sab jaise the waise maujood rehte hain,
 // isliye false karte hi wapas dikhne lagenge.
 const DISABLED_TASK_ACTIONS = {
-  proofPhoto: true,  // 📷 photo upload + 👁️ view + ♻️ replace
-  proofVideo: true,  // 🎥 video upload + ▶️ play
-  doerRemark: true,  // 📝 "kyun nahi hua" wala doer remark
+  proofPhoto: false,  // 📷 photo upload + 👁️ view + ♻️ replace
+  proofVideo: false,  // 🎥 video upload + ▶️ play
+  doerRemark: false,  // 📝 "kyun nahi hua" wala doer remark
 };
 function isTaskActionDisabled(a) { return DISABLED_TASK_ACTIONS[a] === true; }
 
@@ -2712,9 +2712,11 @@ async function loadDashboard() {
       // PC sabhi employees ka dashboard dekhta hai (jaise admin/hod) isliye
       // ise bhi doosron ko task delegate karne ka button milna chahiye — pehle
       // ye branch hi missing tha, isliye PC ke paas koi button nahi dikhta tha.
+      // Label "+ Assign Task" rakha (Delegate nahi) — PC isi naam se dhundta
+      // hai, aur ye 'user' role ke button se match karta hai.
       // Checklist button nahi — bulk-checklist endpoint abhi admin-only hai.
       document.getElementById('dashBtns').innerHTML = `
-        <button class="btn btn-primary" onclick="openDelegate()">+ Delegate</button>`;
+        <button class="btn btn-primary" onclick="openDelegate()">+ Assign Task</button>`;
     } else if (ME.role === 'user') {
       document.getElementById('dashBtns').innerHTML = `
         <button class="btn btn-primary" onclick="openDelegate()">+ Assign Task</button>`;
