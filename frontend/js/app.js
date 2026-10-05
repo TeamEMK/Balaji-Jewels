@@ -3473,7 +3473,7 @@ function filterTasks() { renderTasksTable(); }
 
 function filterTaskStatus(status) {
   taskStatusFilter = status;
-  expandedDoers.clear();
+  collapsedDoers.clear();
   syncTaskTabs();
   renderTasksTable();
 }
@@ -3504,15 +3504,23 @@ function syncTaskTabs() {
   document.getElementById(typeTabId)?.classList.add('active');
 }
 
-let expandedDoers = new Set();
+// Pehle groups DEFAULT me collapsed rehte the (expandedDoers khaali = sab
+// band) — tab/status switch karte hi ye Set clear ho jaata, matlab har baar
+// wapas aane par sirf naam dikhte, tasks click karke kholni padti. Isi wajah
+// se lagta tha "task pe click kiya to gayab ho gayi, dobara nahi dikhi" —
+// asal me task collapse ho jaati thi aur tab switch par fir se collapsed
+// state me reset ho jaati. Ab ulta rakha hai: collapsedDoers me sirf WO
+// doer hote hain jinhe user ne khud band kiya ho — baaki sab by-default
+// khule (visible) rehte hain.
+let collapsedDoers = new Set();
 let _lastDoerIds = [];
 
 function toggleDoerGroup(id) {
-  if (expandedDoers.has(id)) expandedDoers.delete(id); else expandedDoers.add(id);
+  if (collapsedDoers.has(id)) collapsedDoers.delete(id); else collapsedDoers.add(id);
   renderTasksTable();
 }
-function expandAllDoers() { _lastDoerIds.forEach(id=>expandedDoers.add(id)); renderTasksTable(); }
-function collapseAllDoers() { expandedDoers.clear(); renderTasksTable(); }
+function expandAllDoers() { collapsedDoers.clear(); renderTasksTable(); }
+function collapseAllDoers() { _lastDoerIds.forEach(id=>collapsedDoers.add(id)); renderTasksTable(); }
 
 // All Tasks → FMS tab ki pending rows (/api/fms-dashboard se)
 let _fmsTasksRows = [];
@@ -3799,7 +3807,7 @@ function renderTasksTable() {
     const pending = g.tasks.filter(t=>t.status==='pending').length;
     const revised = g.tasks.filter(t=>t.status==='revised').length;
     const completed = g.tasks.filter(t=>t.status==='completed').length;
-    const isOpen = expandedDoers.has(g.id);
+    const isOpen = !collapsedDoers.has(g.id);
     const rows = g.tasks.map(rowFor).join('');
     return `
       <div style="border-bottom:1px solid var(--muted)">
@@ -3842,7 +3850,7 @@ function renderTasksTable() {
 
 function tasksTab(type) {
   tasksType = type;
-  expandedDoers.clear();
+  collapsedDoers.clear();
   // Revised par rehte hue Checklist/FMS par switch kiya to list hamesha khali milti —
   // Pending par le aate hain taaki kuch to dikhe.
   if ((type === 'checklist' || type === 'fms') && taskStatusFilter === 'revised') taskStatusFilter = 'pending';
