@@ -3469,11 +3469,12 @@ function clearTasksDateFilter() {
   filterTasks();
 }
 
-function filterTasks() { renderTasksTable(); }
+function filterTasks() { allTasksPage = 1; renderTasksTable(); }
 
 function filterTaskStatus(status) {
   taskStatusFilter = status;
   collapsedDoers.clear();
+  allTasksPage = 1;
   syncTaskTabs();
   renderTasksTable();
 }
@@ -3598,17 +3599,33 @@ function renderFmsTasksTable() {
   }
 
   const lateCount = rows.filter(r => r.isLate).length;
+
+  // FMS me 1000+ pending rows aam baat hai — sab ek saath render karne se
+  // click/switch slow lagta tha. Yahan bhi wahi page-size wali pagination.
+  const totalPages = Math.max(1, Math.ceil(rows.length / ALL_TASKS_PAGE_SIZE));
+  if (allTasksPage > totalPages) allTasksPage = totalPages;
+  if (allTasksPage < 1) allTasksPage = 1;
+  const pageStart = (allTasksPage - 1) * ALL_TASKS_PAGE_SIZE;
+  const pagedRows = rows.slice(pageStart, pageStart + ALL_TASKS_PAGE_SIZE);
+  const pagerHtml = totalPages > 1 ? `
+    <div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:14px 0">
+      <button class="btn btn-outline btn-sm" onclick="tasksPrevPage()" ${allTasksPage<=1?'disabled':''}>◀ Prev</button>
+      <span style="font-size:12px;color:var(--muted-foreground)">Page ${allTasksPage} of ${totalPages}</span>
+      <button class="btn btn-outline btn-sm" onclick="tasksNextPage()" ${allTasksPage>=totalPages?'disabled':''}>Next ▶</button>
+    </div>` : '';
+
   container.innerHTML = `
     <div style="display:flex;gap:14px;align-items:center;margin-bottom:10px;font-size:13px;color:var(--muted-foreground)">
-      <span><b style="color:var(--foreground)">${rows.length}</b> pending row(s)</span>
+      <span><b style="color:var(--foreground)">${rows.length}</b> pending row(s)${totalPages>1?` — showing ${pagedRows.length} (page ${allTasksPage}/${totalPages})`:''}</span>
       ${lateCount ? `<span style="color:var(--destructive)"><b>${lateCount}</b> late</span>` : ''}
     </div>
     <div class="fms-step-rows-table">
       <table>
         <thead><tr><th>FMS / Step</th><th>Details</th><th>Planned</th><th>Action</th></tr></thead>
-        <tbody>${rows.map(_buildFmsRowHtml).join('')}</tbody>
+        <tbody>${pagedRows.map(_buildFmsRowHtml).join('')}</tbody>
       </table>
-    </div>`;
+    </div>
+    ${pagerHtml}`;
 }
 
 // FMS Tasks page kholo aur wahi FMS select kar do.
@@ -3723,6 +3740,18 @@ function renderTasksTable() {
     return;
   }
 
+  // Pending/Completed/All pe click karte hi 100-1000+ tasks ek saath render
+  // hote the (sab doer-groups khule, har task ka poora <tr> + buttons banate)
+  // — isi se click "slow/delayed" lagta tha, khaaskar Completed/All me jahan
+  // purana saara history jama hota hai. Ab ek page me max ALL_TASKS_PAGE_SIZE
+  // tasks hi render hote hain, Prev/Next se aage-peeche jao.
+  const totalFilteredCount = tasks.length;
+  const totalPages = Math.max(1, Math.ceil(totalFilteredCount / ALL_TASKS_PAGE_SIZE));
+  if (allTasksPage > totalPages) allTasksPage = totalPages;
+  if (allTasksPage < 1) allTasksPage = 1;
+  const pageStart = (allTasksPage - 1) * ALL_TASKS_PAGE_SIZE;
+  const pagedTasks = tasks.slice(pageStart, pageStart + ALL_TASKS_PAGE_SIZE);
+
   const isChecklist = tasksType === 'checklist';
 
   // 📷 Proof photo — optional. Upload -> View + ek baar Replace allowed.
@@ -3792,9 +3821,9 @@ function renderTasksTable() {
     </tr>`;
   }
 
-  // Group by doer (assigned_to)
+  // Group by doer (assigned_to) — sirf current page ke tasks group hote hain
   const groups = {};
-  tasks.forEach(t => {
+  pagedTasks.forEach(t => {
     const key = String(t.assigned_to ?? t.assignedToId ?? t.assignedToName);
     if (!groups[key]) groups[key] = { id: key, name: t.assignedToName || 'Unknown', tasks: [] };
     groups[key].tasks.push(t);
@@ -3835,18 +3864,29 @@ function renderTasksTable() {
       </div>`;
   }).join('');
 
+  const pagerHtml = totalPages > 1 ? `
+    <div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:14px 18px">
+      <button class="btn btn-outline btn-sm" onclick="tasksPrevPage()" ${allTasksPage<=1?'disabled':''}>◀ Prev</button>
+      <span style="font-size:12px;color:var(--muted-foreground)">Page ${allTasksPage} of ${totalPages}</span>
+      <button class="btn btn-outline btn-sm" onclick="tasksNextPage()" ${allTasksPage>=totalPages?'disabled':''}>Next ▶</button>
+    </div>` : '';
+
   container.innerHTML = `
     <div class="flat-tasks-table">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--muted)">
-        <span style="font-size:13px;color:var(--muted-foreground)">${groupList.length} doers · ${tasks.length} tasks</span>
+        <span style="font-size:13px;color:var(--muted-foreground)">${groupList.length} doers · ${pagedTasks.length} of ${totalFilteredCount} tasks${totalPages>1?` (page ${allTasksPage}/${totalPages})`:''}</span>
         <div style="display:flex;gap:8px">
           <button class="btn btn-outline btn-sm" onclick="expandAllDoers()">Expand all</button>
           <button class="btn btn-outline btn-sm" onclick="collapseAllDoers()">Collapse all</button>
         </div>
       </div>
       ${groupsHtml}
+      ${pagerHtml}
     </div>`;
 }
+
+function tasksPrevPage() { if (allTasksPage > 1) { allTasksPage--; renderTasksTable(); } }
+function tasksNextPage() { allTasksPage++; renderTasksTable(); }
 
 function tasksTab(type) {
   tasksType = type;
