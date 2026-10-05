@@ -8217,7 +8217,7 @@ function buildStepBoxHTML(idx) {
           </div>
           <div class="multi-select-dropdown" id="fmsDoerDrop_${idx}">
             <div class="multi-select-search">
-              <input type="text" id="fmsDoerSearch_${idx}" placeholder="Search users..." autocomplete="off"
+              <input type="search" id="fmsDoerSearch_${idx}" placeholder="Search users..." autocomplete="off" name="fms-doer-search-${idx}" readonly onfocus="this.removeAttribute('readonly')"
                 oninput="filterFMSDoers(${idx}, this.value)" onclick="event.stopPropagation()"/>
             </div>
             <div id="fmsDoerList_${idx}">${userOptions}</div>
@@ -8936,8 +8936,8 @@ async function loadFMSTaskRows() {
   document.getElementById('fmsTaskRowsContainer').innerHTML = `
     <div class="fms-search-bar">
       <span style="font-size:14px">🔍</span>
-      <input type="text" id="fmsRowSearch" placeholder="Search tasks (any column)..."
-        oninput="filterFMSTaskRows()" autocomplete="off"/>
+      <input type="search" id="fmsRowSearch" placeholder="Search tasks (any column)..."
+        oninput="filterFMSTaskRows()" autocomplete="off" name="fms-row-search-query" readonly onfocus="this.removeAttribute('readonly')"/>
       <span class="fms-search-count" id="fmsRowSearchCount">${r.rows.length} row(s)</span>
       <button class="fms-search-clear" onclick="clearFMSRowSearch()" style="display:none" id="fmsRowSearchClearBtn">✕ Clear</button>
     </div>
@@ -9163,7 +9163,7 @@ function renderFMSSummary() {
       </div>`).join('')}
     </div></div>`;
   const search = `<div style="position:sticky;top:0;background:var(--card);z-index:5;padding:6px 0 10px;border-bottom:1px solid var(--muted);margin-bottom:10px;display:flex;align-items:center;gap:10px">
-    <input type="search" id="fmsSummarySearch" inputmode="numeric" aria-label="Search by order number" oninput="onSummarySearch()"
+    <input type="search" id="fmsSummarySearch" inputmode="numeric" aria-label="Search by order number" oninput="onSummarySearch()" autocomplete="off" name="fms-summary-search-query" readonly onfocus="this.removeAttribute('readonly')"
       placeholder="🔍 Search by ${escapeHtml(d.orderLabel || 'Order No')}…"
       style="flex:1;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none"/>
     <span id="fmsSummaryCount" style="font-size:12px;color:var(--muted-foreground);font-weight:600;white-space:nowrap">${d.orders.length} orders</span>
