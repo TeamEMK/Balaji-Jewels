@@ -2629,24 +2629,27 @@ async function loadForms() {
   if (data.error) { box.innerHTML = `<div style="padding:20px;color:var(--destructive)">${escapeHtml(data.error)}</div>`; return; }
   _quickForms = Array.isArray(data) ? data : [];
   if (!_quickForms.length) {
-    box.innerHTML = '<div style="padding:30px;color:var(--muted-foreground);font-size:13px;text-align:center">No forms added yet — click "+ Add Form" to add one.</div>';
+    box.innerHTML = '<div style="padding:30px;color:var(--muted-foreground);font-size:13px;text-align:center">No forms added yet — click "+ Add New Form" to add one.</div>';
     return;
   }
-  box.innerHTML = _quickForms.map(_renderFormCard).join('');
+  box.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px">
+    ${_quickForms.map(_renderFormCard).join('')}
+  </div>`;
 }
 
+// Card-grid layout — icon+naam upar, "Open" pill button + chhote edit/delete
+// icon-buttons neeche, ek row me. (User ne reference app ka screenshot diya
+// tha, usi jaisa layout chahiye tha.)
 function _renderFormCard(f) {
-  const safeLink = escapeHtml(f.link);
-  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--card)">
-    <div style="min-width:0">
-      <div style="font-weight:600;font-size:14px;color:var(--foreground)">${escapeHtml(f.name)}</div>
-      <div style="font-size:11px;color:var(--muted-foreground);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${safeLink}</div>
-      <div style="font-size:10px;color:var(--muted-foreground);margin-top:3px">Added by ${escapeHtml(f.addedByName || '')}</div>
+  return `<div title="Added by ${escapeHtml(f.addedByName || '')}" style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;box-shadow:var(--shadow-xs)">
+    <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:18px;min-height:40px">
+      <span style="font-size:17px;line-height:1.3;flex-shrink:0">📄</span>
+      <span style="font-weight:600;font-size:14.5px;color:var(--foreground);line-height:1.35">${escapeHtml(f.name)}</span>
     </div>
-    <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-      <button class="btn btn-primary btn-sm" onclick="openQuickForm(${f.id})">Open ↗</button>
-      <button title="Edit" onclick="openEditFormModal(${f.id})" style="background:none;border:none;cursor:pointer;color:var(--chart-1);font-size:14px;padding:4px;line-height:1">✏️</button>
-      <button title="Delete" onclick="deleteQuickForm(${f.id})" style="background:none;border:none;cursor:pointer;color:var(--destructive);font-size:14px;padding:4px;line-height:1">🗑</button>
+    <div style="display:flex;align-items:center;gap:8px">
+      <button onclick="openQuickForm(${f.id})" style="flex:1;background:var(--primary);color:var(--primary-foreground);border:none;border-radius:999px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:2px;text-align:center">Open ↗</button>
+      <button title="Edit" onclick="openEditFormModal(${f.id})" style="background:color-mix(in srgb,var(--chart-1) 14%,transparent);color:var(--chart-1);border:none;border-radius:10px;width:34px;height:34px;flex-shrink:0;cursor:pointer;font-size:14px">✏️</button>
+      <button title="Delete" onclick="deleteQuickForm(${f.id})" style="background:color-mix(in srgb,var(--destructive) 12%,transparent);color:var(--destructive);border:none;border-radius:10px;width:34px;height:34px;flex-shrink:0;cursor:pointer;font-size:14px">🗑</button>
     </div>
   </div>`;
 }
