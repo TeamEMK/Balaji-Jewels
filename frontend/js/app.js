@@ -2753,6 +2753,7 @@ async function loadClientDashboard() {
       ${card('Total Orders', t.orders||0)}
       ${card('Pending Orders', t.pendingOrders||0, 'var(--destructive)')}
       ${card('Completed Orders', t.completedOrders||0, 'var(--success)')}
+      ${card('Cancelled Orders', t.cancelledOrders||0, 'var(--destructive)')}
       ${card('Delivery Date Recorded', t.deliveredOrders||0, 'var(--chart-1)')}
       ${card('Total Clients', t.totalClients||0)}
       ${card('Clients — All Complete', t.clientsComplete||0, 'var(--success)')}
@@ -2816,9 +2817,10 @@ function openClientDetail(idx) {
   // Total Pcs — har order ke "No Of Pcs" ka sum (jo number nahi hai use ignore kiya)
   const totalPcs = (c.orders||[]).reduce((sum,o) => sum + (parseInt(o.pcs,10)||0), 0);
   document.getElementById('cdDetailCards').innerHTML =
-    card('Total Orders', c.total) +
+    card('Received', c.received ?? c.total) +
     card('In Process', c.pending, 'var(--destructive)') +
     card('Completed', c.completed, 'var(--success)') +
+    card('Cancelled', c.cancelled, 'var(--destructive)') +
     card('Total Pcs', totalPcs, 'var(--chart-1)') +
     card('Delivery Date Recorded', c.delivered, 'var(--chart-1)');
 
@@ -2838,19 +2840,29 @@ function openClientDetail(idx) {
         <th style="padding:8px 10px;text-align:left">Order No</th>
         <th style="padding:8px 10px;text-align:left">Order Type</th>
         <th style="padding:8px 10px;text-align:center">No. Of Pcs</th>
+        <th style="padding:8px 10px;text-align:left">Last Step</th>
         <th style="padding:8px 10px;text-align:left">FMS Status</th>
         <th style="padding:8px 10px;text-align:left">Order Status</th>
         <th style="padding:8px 10px;text-align:left">Delivery Date</th>
+        <th style="padding:8px 10px;text-align:center">Pcs Bagging Done</th>
+        <th style="padding:8px 10px;text-align:center">Balance Pcs</th>
+        <th style="padding:8px 10px;text-align:center">Pcs Cancel/Rejected</th>
+        <th style="padding:8px 10px;text-align:left">Bagging Status</th>
       </tr></thead>
       <tbody>
-        ${orders.map(o => `<tr style="border-top:1px solid var(--muted)">
+        ${orders.map(o => `<tr style="border-top:1px solid var(--muted)${o.isCancelled?';background:color-mix(in srgb,var(--destructive) 6%,transparent)':''}">
           <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.uniqueId)}</td>
           <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.orderNo)}</td>
           <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.orderType)}</td>
           <td style="padding:7px 10px;text-align:center">${escapeHtml(o.pcs)||'—'}</td>
+          <td style="padding:7px 10px;white-space:nowrap;color:var(--muted-foreground)">${escapeHtml(o.lastStepStatus)||'—'}</td>
           <td style="padding:7px 10px;white-space:nowrap">${statusBadge(o)}</td>
-          <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.orderStatus)}</td>
+          <td style="padding:7px 10px;white-space:nowrap${o.isCancelled?';color:var(--destructive);font-weight:600':''}">${escapeHtml(o.orderStatus)}</td>
           <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.deliveryDate)||'—'}</td>
+          <td style="padding:7px 10px;text-align:center">${escapeHtml(o.pcsBaggingDone)||'—'}</td>
+          <td style="padding:7px 10px;text-align:center">${escapeHtml(o.balancePcs)||'—'}</td>
+          <td style="padding:7px 10px;text-align:center">${escapeHtml(o.pcsCancelRejected)||'—'}</td>
+          <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.baggingStatus)||'—'}</td>
         </tr>`).join('')}
       </tbody>
     </table>`;
