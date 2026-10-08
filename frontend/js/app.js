@@ -2813,17 +2813,22 @@ function openClientDetail(idx) {
       <div style="font-size:10px;font-weight:600;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.3px">${label}</div>
       <div style="font-size:19px;font-weight:700;color:${color||'var(--foreground)'};margin-top:2px">${val}</div>
     </div>`;
+  // Total Pcs — har order ke "No Of Pcs" ka sum (jo number nahi hai use ignore kiya)
+  const totalPcs = (c.orders||[]).reduce((sum,o) => sum + (parseInt(o.pcs,10)||0), 0);
   document.getElementById('cdDetailCards').innerHTML =
     card('Total Orders', c.total) +
-    card('Pending', c.pending, 'var(--destructive)') +
+    card('In Process', c.pending, 'var(--destructive)') +
     card('Completed', c.completed, 'var(--success)') +
+    card('Total Pcs', totalPcs, 'var(--chart-1)') +
     card('Delivery Date Recorded', c.delivered, 'var(--chart-1)');
 
+  // In-process (FMS 'Pending' — matlab order abhi process me hai, steps complete nahi
+  // hue) upar sorted, taaki turant dikhe kahan atka hai.
   const orders = (c.orders || []).slice().sort((a, b) => (a.statusKey==='pending'?0:1) - (b.statusKey==='pending'?0:1));
   const statusBadge = o => o.statusKey === 'completed'
     ? `<span class="status-badge completed">Complete</span>`
     : o.statusKey === 'pending'
-    ? `<span class="status-badge pending">Pending</span>`
+    ? `<span class="status-badge pending">In Process</span>`
     : `<span class="status-badge" style="background:var(--muted);color:var(--muted-foreground)">${escapeHtml(o.fmsStatus||'—')}</span>`;
 
   document.getElementById('cdDetailTableWrap').innerHTML = `
@@ -2832,22 +2837,20 @@ function openClientDetail(idx) {
         <th style="padding:8px 10px;text-align:left">Unique ID</th>
         <th style="padding:8px 10px;text-align:left">Order No</th>
         <th style="padding:8px 10px;text-align:left">Order Type</th>
-        <th style="padding:8px 10px;text-align:left">Last Step</th>
+        <th style="padding:8px 10px;text-align:center">No. Of Pcs</th>
         <th style="padding:8px 10px;text-align:left">FMS Status</th>
         <th style="padding:8px 10px;text-align:left">Order Status</th>
         <th style="padding:8px 10px;text-align:left">Delivery Date</th>
-        <th style="padding:8px 10px;text-align:left">Timestamp</th>
       </tr></thead>
       <tbody>
         ${orders.map(o => `<tr style="border-top:1px solid var(--muted)">
           <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.uniqueId)}</td>
           <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.orderNo)}</td>
           <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.orderType)}</td>
-          <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.lastStepStatus)}</td>
+          <td style="padding:7px 10px;text-align:center">${escapeHtml(o.pcs)||'—'}</td>
           <td style="padding:7px 10px;white-space:nowrap">${statusBadge(o)}</td>
           <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.orderStatus)}</td>
           <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.deliveryDate)||'—'}</td>
-          <td style="padding:7px 10px;white-space:nowrap;color:var(--muted-foreground)">${escapeHtml(o.timestamp)}</td>
         </tr>`).join('')}
       </tbody>
     </table>`;
