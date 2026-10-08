@@ -2308,6 +2308,18 @@
   </div>
 </div>
 
+<!-- ══ CLIENT DASHBOARD — ek client ki poori order detail ══ -->
+<div class="modal-overlay" id="clientDetailModal">
+  <div class="modal" style="max-width:920px;max-height:85vh;display:flex;flex-direction:column">
+    <h3 id="cdDetailTitle">📋 Client Details</h3>
+    <div id="cdDetailCards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:14px;flex-shrink:0"></div>
+    <div id="cdDetailTableWrap" style="overflow:auto;flex:1;min-height:0"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px;flex-shrink:0">
+      <button class="btn btn-outline" onclick="closeModal('clientDetailModal')">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ RESOLVE HELP TICKET (Admin ya target person) ══ -->
 <div class="modal-overlay" id="resolveHtModal">
   <div class="modal" style="max-width:560px">

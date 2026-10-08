@@ -2749,10 +2749,11 @@ async function loadClientDashboard() {
     </div>`;
 
   box.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:20px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px">
       ${card('Total Orders', t.orders||0)}
       ${card('Pending Orders', t.pendingOrders||0, 'var(--destructive)')}
       ${card('Completed Orders', t.completedOrders||0, 'var(--success)')}
+      ${card('Delivery Date Recorded', t.deliveredOrders||0, 'var(--chart-1)')}
       ${card('Total Clients', t.totalClients||0)}
       ${card('Clients — All Complete', t.clientsComplete||0, 'var(--success)')}
       ${card('Clients — Has Pending', t.clientsPending||0, 'var(--warning)')}
@@ -2762,6 +2763,7 @@ async function loadClientDashboard() {
       <input type="search" id="cdSearch" placeholder="Search client…" oninput="renderClientDashboardTable()" autocomplete="off" name="cd-search-query" readonly onfocus="this.removeAttribute('readonly')"
         style="width:100%;padding:8px 12px 8px 32px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;box-sizing:border-box"/>
     </div>
+    <div style="font-size:11.5px;color:var(--muted-foreground);margin-bottom:8px">💡 Kisi bhi client pe click karo — uski poori order list (kaunsa pending, kaunsa complete) khul jayegi.</div>
     <div id="cdTableWrap"></div>`;
   renderClientDashboardTable();
 }
@@ -2786,8 +2788,8 @@ function renderClientDashboardTable() {
           <th style="padding:10px 14px;text-align:left">Status</th>
         </tr></thead>
         <tbody>
-          ${rows.map(c => `<tr style="border-top:1px solid var(--muted)">
-            <td style="padding:9px 14px;font-weight:600">${escapeHtml(c.name)}</td>
+          ${rows.map(c => `<tr onclick="openClientDetail(${_cdClients.indexOf(c)})" style="border-top:1px solid var(--muted);cursor:pointer" onmouseover="this.style.background='var(--muted)'" onmouseout="this.style.background=''">
+            <td style="padding:9px 14px;font-weight:600;color:var(--primary);text-decoration:underline;text-underline-offset:2px">${escapeHtml(c.name)}</td>
             <td style="padding:9px 14px;text-align:center">${c.total}</td>
             <td style="padding:9px 14px;text-align:center;color:${c.pending?'var(--destructive)':'var(--muted-foreground)'};font-weight:${c.pending?'700':'400'}">${c.pending}</td>
             <td style="padding:9px 14px;text-align:center;color:var(--success);font-weight:600">${c.completed}</td>
@@ -2798,6 +2800,59 @@ function renderClientDashboardTable() {
         </tbody>
       </table>
     </div>`;
+}
+
+// Client pe click → uski poori order list ek modal me, 1 click me "kya chal raha hai" dikhane ke liye.
+function openClientDetail(idx) {
+  const c = _cdClients[idx];
+  if (!c) return;
+  document.getElementById('cdDetailTitle').textContent = `📋 ${c.name}`;
+
+  const card = (label, val, color) => `
+    <div style="background:var(--muted);border-radius:10px;padding:10px 12px">
+      <div style="font-size:10px;font-weight:600;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.3px">${label}</div>
+      <div style="font-size:19px;font-weight:700;color:${color||'var(--foreground)'};margin-top:2px">${val}</div>
+    </div>`;
+  document.getElementById('cdDetailCards').innerHTML =
+    card('Total Orders', c.total) +
+    card('Pending', c.pending, 'var(--destructive)') +
+    card('Completed', c.completed, 'var(--success)') +
+    card('Delivery Date Recorded', c.delivered, 'var(--chart-1)');
+
+  const orders = (c.orders || []).slice().sort((a, b) => (a.statusKey==='pending'?0:1) - (b.statusKey==='pending'?0:1));
+  const statusBadge = o => o.statusKey === 'completed'
+    ? `<span class="status-badge completed">Complete</span>`
+    : o.statusKey === 'pending'
+    ? `<span class="status-badge pending">Pending</span>`
+    : `<span class="status-badge" style="background:var(--muted);color:var(--muted-foreground)">${escapeHtml(o.fmsStatus||'—')}</span>`;
+
+  document.getElementById('cdDetailTableWrap').innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <thead><tr style="background:var(--muted);position:sticky;top:0">
+        <th style="padding:8px 10px;text-align:left">Unique ID</th>
+        <th style="padding:8px 10px;text-align:left">Order No</th>
+        <th style="padding:8px 10px;text-align:left">Order Type</th>
+        <th style="padding:8px 10px;text-align:left">Last Step</th>
+        <th style="padding:8px 10px;text-align:left">FMS Status</th>
+        <th style="padding:8px 10px;text-align:left">Order Status</th>
+        <th style="padding:8px 10px;text-align:left">Delivery Date</th>
+        <th style="padding:8px 10px;text-align:left">Timestamp</th>
+      </tr></thead>
+      <tbody>
+        ${orders.map(o => `<tr style="border-top:1px solid var(--muted)">
+          <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.uniqueId)}</td>
+          <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.orderNo)}</td>
+          <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.orderType)}</td>
+          <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.lastStepStatus)}</td>
+          <td style="padding:7px 10px;white-space:nowrap">${statusBadge(o)}</td>
+          <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.orderStatus)}</td>
+          <td style="padding:7px 10px;white-space:nowrap">${escapeHtml(o.deliveryDate)||'—'}</td>
+          <td style="padding:7px 10px;white-space:nowrap;color:var(--muted-foreground)">${escapeHtml(o.timestamp)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+
+  document.getElementById('clientDetailModal').classList.add('open');
 }
 
 // ══════════════════════════════════════════════════════
