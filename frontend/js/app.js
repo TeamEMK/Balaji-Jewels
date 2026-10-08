@@ -281,6 +281,7 @@ async function init() {
       document.getElementById('nav-fms').style.display = 'flex';
       document.getElementById('nav-payroll').style.display = 'flex';
       document.getElementById('nav-payments').style.display = 'flex';
+      document.getElementById('nav-client-dashboard').style.display = 'flex';
       document.getElementById('bulkDeleteBtn').style.display = 'inline-flex';
       document.getElementById('bulkEditBtn').style.display = 'inline-flex';
       document.getElementById('misCombinedBtn').style.display = 'inline-flex';
@@ -295,6 +296,7 @@ async function init() {
       // PC: can view all tasks + approve, but cannot edit/delete
       // Nav items same as employee (dashboard, alltasks, approvals, profile, fms-tasks)
       document.getElementById('nav-360').style.display = 'flex';
+      document.getElementById('nav-client-dashboard').style.display = 'flex';
     }
     if (ME.role === 'user') {
       // Regular user ko MIS dikhta hai — sirf apni (self-only, backend filter karta hai)
@@ -430,7 +432,7 @@ function setMinDates() {
 // ══════════════════════════════════════════════════════
 // NAVIGATION
 // ══════════════════════════════════════════════════════
-const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',payments:'Payments',query:'Query','help-tickets':'Help Ticket',users:'Users',profile:'Profile',mis:'MIS Report',score360:'360° Score',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client',forms:'Forms'};
+const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',payments:'Payments',query:'Query','help-tickets':'Help Ticket',users:'Users',profile:'Profile',mis:'MIS Report',score360:'360° Score',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client',forms:'Forms','client-dashboard':'Client Dashboard'};
 
 // Sidebar par cursor jaate hi (jab wo expand hone lagta hai) koi bhi khula dropdown
 // band kar do — warna native select popup sidebar ke upar overlap dikhta hai.
@@ -523,6 +525,7 @@ function navigate(page, el) {
   if (page==='help-tickets') loadHelpTickets();
   if (page==='records') loadRecords();
   if (page==='forms') loadForms();
+  if (page==='client-dashboard') loadClientDashboard();
   // navigate() core app ka hissa hai, yaani client ki copy me bhi jaata hai —
   // par ncLoadLog generator ke markers ke andar hai aur wahan hota hi nahi.
   // Isliye seedha bulane ke bajaye pehle dekh lete hain ki function hai ya nahi.
@@ -2721,6 +2724,80 @@ async function deleteQuickForm(id) {
   if (r.error) { showToast(r.error, 'error'); return; }
   showToast('Form deleted');
   loadForms();
+}
+
+// ══════════════════════════════════════════════════════
+// CLIENT DASHBOARD (Admin/PC) — "NEW Combined O2D" FMS sheet se client-wise
+// order totals/pending/complete. "Vendor" ka matlab yahi Client Name hai
+// (sheet me alag Vendor column bharaa hi nahi hai), isliye client-level
+// complete/pending ko hi vendor-stat ki tarah dikhaya hai.
+// ══════════════════════════════════════════════════════
+let _cdClients = [];
+
+async function loadClientDashboard() {
+  const box = document.getElementById('clientDashboardContent');
+  box.innerHTML = '<div style="padding:30px;color:var(--muted-foreground);font-size:13px;text-align:center">Loading from Google Sheet…</div>';
+  const data = await api('/api/client-dashboard');
+  if (data.error) { box.innerHTML = `<div style="padding:20px;color:var(--destructive)">${escapeHtml(data.error)}</div>`; return; }
+  _cdClients = data.clients || [];
+  const t = data.totals || {};
+
+  const card = (label, val, color) => `
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px">
+      <div style="font-size:11px;font-weight:600;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.3px">${label}</div>
+      <div style="font-size:26px;font-weight:700;color:${color||'var(--foreground)'};margin-top:4px">${val}</div>
+    </div>`;
+
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:20px">
+      ${card('Total Orders', t.orders||0)}
+      ${card('Pending Orders', t.pendingOrders||0, 'var(--destructive)')}
+      ${card('Completed Orders', t.completedOrders||0, 'var(--success)')}
+      ${card('Total Clients', t.totalClients||0)}
+      ${card('Clients — All Complete', t.clientsComplete||0, 'var(--success)')}
+      ${card('Clients — Has Pending', t.clientsPending||0, 'var(--warning)')}
+    </div>
+    <div style="position:relative;max-width:320px;margin-bottom:14px">
+      <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted-foreground);font-size:13px">🔍</span>
+      <input type="search" id="cdSearch" placeholder="Search client…" oninput="renderClientDashboardTable()" autocomplete="off" name="cd-search-query" readonly onfocus="this.removeAttribute('readonly')"
+        style="width:100%;padding:8px 12px 8px 32px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;box-sizing:border-box"/>
+    </div>
+    <div id="cdTableWrap"></div>`;
+  renderClientDashboardTable();
+}
+
+function renderClientDashboardTable() {
+  const wrap = document.getElementById('cdTableWrap');
+  if (!wrap) return;
+  const q = (document.getElementById('cdSearch')?.value || '').trim().toLowerCase();
+  const rows = !q ? _cdClients : _cdClients.filter(c => c.name.toLowerCase().includes(q));
+  if (!rows.length) {
+    wrap.innerHTML = '<div style="padding:30px;color:var(--muted-foreground);font-size:13px;text-align:center">No matching clients.</div>';
+    return;
+  }
+  wrap.innerHTML = `
+    <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:var(--muted)">
+          <th style="padding:10px 14px;text-align:left">Client Name</th>
+          <th style="padding:10px 14px;text-align:center">Total Orders</th>
+          <th style="padding:10px 14px;text-align:center">Pending</th>
+          <th style="padding:10px 14px;text-align:center">Completed</th>
+          <th style="padding:10px 14px;text-align:left">Status</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(c => `<tr style="border-top:1px solid var(--muted)">
+            <td style="padding:9px 14px;font-weight:600">${escapeHtml(c.name)}</td>
+            <td style="padding:9px 14px;text-align:center">${c.total}</td>
+            <td style="padding:9px 14px;text-align:center;color:${c.pending?'var(--destructive)':'var(--muted-foreground)'};font-weight:${c.pending?'700':'400'}">${c.pending}</td>
+            <td style="padding:9px 14px;text-align:center;color:var(--success);font-weight:600">${c.completed}</td>
+            <td style="padding:9px 14px">${(c.pending || c.other)
+              ? `<span class="status-badge pending">Has Pending</span>`
+              : `<span class="status-badge completed">All Complete</span>`}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 // ══════════════════════════════════════════════════════

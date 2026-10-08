@@ -107,6 +107,10 @@
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
       <span class="nav-label-text">360° Score</span>
     </div>
+    <div class="nav-item" id="nav-client-dashboard" style="display:none" onclick="navigate('client-dashboard',this)">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2M19 21H5m0 0H3m9-13h1m-1 4h1m-5-4h1m-1 4h1m4 4h1m-5 0h1"/></svg>
+      <span class="nav-label-text">Client Dashboard</span>
+    </div>
     <div class="nav-item" id="nav-records" style="display:none" onclick="navigate('records',this)">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
       <span class="nav-label-text">Records</span>
@@ -922,6 +926,18 @@
       <button class="btn btn-primary" style="border-radius:999px;padding:9px 18px" onclick="openAddFormModal()">+ Add New Form</button>
     </div>
     <div id="formsContent"></div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       CLIENT DASHBOARD (Admin / PC) — "NEW Combined O2D" FMS sheet se
+       client-wise order totals/pending/complete.
+  ══════════════════════════════════════ -->
+  <div id="page-client-dashboard" class="page">
+    <div class="page-header">
+      <div></div>
+      <button class="btn btn-outline" onclick="loadClientDashboard()">⟳ Refresh</button>
+    </div>
+    <div id="clientDashboardContent"></div>
   </div>
 
   <!-- ══════════════════════════════════════
