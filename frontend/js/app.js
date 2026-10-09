@@ -2735,7 +2735,15 @@ async function deleteQuickForm(id) {
 let _cdClients = [];
 
 let _cdTotals = {};
-let _cdOverviewFilter = 'all'; // all | pending | completed | cancelled | delivered | clientsComplete | clientsPending
+// 'allOrders'/'pending'/'completed'/'cancelled'/'delivered' → ORDER-level
+// (individual orders dikhte hain, client ka naam ek column ki tarah).
+// 'allClients'/'clientsComplete'/'clientsPending' → CLIENT-level (jaisa
+// pehle se tha, har client ek row, uske totals ke saath).
+let _cdOverviewFilter = 'allClients';
+const CD_ORDER_LEVEL_FILTERS = new Set(['allOrders','pending','completed','cancelled','delivered']);
+let _cdAllOrders = []; // flat: har order apne client ka naam liye hue (sirf order-level filters ke liye)
+let _cdOrderPage = 1;
+const CD_ORDER_PAGE_SIZE = 50;
 let _o2dChartInst = null;
 
 async function loadClientDashboard() {
@@ -2745,7 +2753,10 @@ async function loadClientDashboard() {
   if (data.error) { box.innerHTML = `<div style="padding:20px;color:var(--destructive)">${escapeHtml(data.error)}</div>`; return; }
   _cdClients = data.clients || [];
   _cdTotals = data.totals || {};
-  _cdOverviewFilter = 'all';
+  _cdOverviewFilter = 'allClients';
+  _cdOrderPage = 1;
+  _cdAllOrders = [];
+  _cdClients.forEach(c => (c.orders||[]).forEach(o => _cdAllOrders.push({ ...o, clientName: c.name })));
 
   box.innerHTML = `
     <div id="cdCardsWrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px"></div>
@@ -2760,10 +2771,10 @@ async function loadClientDashboard() {
     </div>
     <div style="position:relative;max-width:320px;margin-bottom:14px">
       <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted-foreground);font-size:13px">🔍</span>
-      <input type="search" id="cdSearch" placeholder="Search client…" oninput="renderClientDashboardTable()" autocomplete="off" name="cd-search-query" readonly onfocus="this.removeAttribute('readonly')"
+      <input type="search" id="cdSearch" placeholder="Search client or order no…" oninput="renderClientDashboardTable()" autocomplete="off" name="cd-search-query" readonly onfocus="this.removeAttribute('readonly')"
         style="width:100%;padding:8px 12px 8px 32px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;box-sizing:border-box"/>
     </div>
-    <div style="font-size:11.5px;color:var(--muted-foreground);margin-bottom:8px">💡 Upar kisi bhi card (ya pie chart slice) pe click karo — sirf wahi clients niche dikhenge. Kisi client ke naam pe click karo — uski poori order list khul jayegi.</div>
+    <div style="font-size:11.5px;color:var(--muted-foreground);margin-bottom:8px">💡 Order wale card (Total/Pending/Completed/Cancelled/Delivery) pe click karo — un individual orders ki list niche dikhegi. Client wale card pe click karo — client-wise list dikhegi. Kisi bhi client ke naam pe click karo — uski poori detail khul jayegi.</div>
     <div id="cdTableWrap"></div>`;
 
   renderO2DCards();
@@ -2787,18 +2798,19 @@ function renderO2DCards() {
     </div>`;
   };
   wrap.innerHTML =
-    card('Total Orders', t.orders||0, null, 'all') +
+    card('Total Orders', t.orders||0, null, 'allOrders') +
     card('Pending Orders', t.pendingOrders||0, 'var(--warning)', 'pending') +
     card('Completed Orders', t.completedOrders||0, 'var(--success)', 'completed') +
     card('Cancelled Orders', t.cancelledOrders||0, 'var(--destructive)', 'cancelled') +
     card('Delivery Date Recorded', t.deliveredOrders||0, 'var(--chart-1)', 'delivered') +
-    card('Total Clients', t.totalClients||0, null, 'all') +
+    card('Total Clients', t.totalClients||0, null, 'allClients') +
     card('Clients — All Complete', t.clientsComplete||0, 'var(--success)', 'clientsComplete') +
     card('Clients — Has Pending', t.clientsPending||0, 'var(--warning)', 'clientsPending');
 }
 
 function setO2DFilter(key) {
-  _cdOverviewFilter = (_cdOverviewFilter === key) ? 'all' : key;
+  _cdOverviewFilter = (_cdOverviewFilter === key) ? 'allClients' : key;
+  _cdOrderPage = 1;
   renderO2DCards();
   renderClientDashboardTable();
 }
@@ -2830,25 +2842,45 @@ function renderO2DChart() {
 
 function clientMatchesOverviewFilter(c) {
   switch (_cdOverviewFilter) {
-    case 'pending': return c.pending > 0;
-    case 'completed': return c.completed > 0;
-    case 'cancelled': return c.cancelled > 0;
-    case 'delivered': return c.delivered > 0;
     case 'clientsComplete': return c.pending === 0 && c.other === 0;
     case 'clientsPending': return c.pending > 0 || c.other > 0;
-    default: return true;
+    default: return true; // allClients
+  }
+}
+function orderMatchesOverviewFilter(o) {
+  switch (_cdOverviewFilter) {
+    case 'pending': return o.statusKey === 'pending';
+    case 'completed': return o.statusKey === 'completed';
+    case 'cancelled': return !!o.isCancelled;
+    case 'delivered': return !!o.deliveryDate;
+    default: return true; // allOrders
   }
 }
 
+// Filter badalte hi table khud switch ho jaati hai: order-wale cards
+// (Total/Pending/Completed/Cancelled/Delivery) → individual orders ki list
+// (client naam ek column me); client-wale cards (Total Clients/All Complete/
+// Has Pending) → client-wise summary, jaisa pehle tha.
 function renderClientDashboardTable() {
   const wrap = document.getElementById('cdTableWrap');
   if (!wrap) return;
+  if (CD_ORDER_LEVEL_FILTERS.has(_cdOverviewFilter)) renderOrdersFilteredTable(wrap);
+  else renderClientsFilteredTable(wrap);
+}
+
+const CD_FILTER_LABELS = {
+  allOrders: 'Total Orders', pending: 'Pending Orders', completed: 'Completed Orders',
+  cancelled: 'Cancelled Orders', delivered: 'Delivery Date Recorded',
+  allClients: 'Total Clients', clientsComplete: 'Clients — All Complete', clientsPending: 'Clients — Has Pending',
+};
+
+function renderClientsFilteredTable(wrap) {
   const q = (document.getElementById('cdSearch')?.value || '').trim().toLowerCase();
   let rows = _cdClients.filter(clientMatchesOverviewFilter);
   if (q) rows = rows.filter(c => c.name.toLowerCase().includes(q));
 
-  const filterNote = _cdOverviewFilter !== 'all'
-    ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:12px;color:var(--primary)">Filtered — showing ${rows.length} client(s) <button onclick="setO2DFilter('all')" style="background:none;border:none;color:var(--primary);text-decoration:underline;cursor:pointer;font-size:12px;padding:0">clear filter</button></div>`
+  const filterNote = _cdOverviewFilter !== 'allClients'
+    ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:12px;color:var(--primary)">Filter: <b>${CD_FILTER_LABELS[_cdOverviewFilter]}</b> — showing ${rows.length} client(s) <button onclick="setO2DFilter('allClients')" style="background:none;border:none;color:var(--primary);text-decoration:underline;cursor:pointer;font-size:12px;padding:0">clear filter</button></div>`
     : '';
 
   if (!rows.length) {
@@ -2880,9 +2912,82 @@ function renderClientDashboardTable() {
     </div>`;
 }
 
+function renderOrdersFilteredTable(wrap) {
+  const q = (document.getElementById('cdSearch')?.value || '').trim().toLowerCase();
+  let rows = _cdAllOrders.filter(orderMatchesOverviewFilter);
+  if (q) rows = rows.filter(o =>
+    o.clientName.toLowerCase().includes(q) ||
+    (o.uniqueId||'').toLowerCase().includes(q) ||
+    (o.orderNo||'').toLowerCase().includes(q));
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / CD_ORDER_PAGE_SIZE));
+  if (_cdOrderPage > totalPages) _cdOrderPage = totalPages;
+  if (_cdOrderPage < 1) _cdOrderPage = 1;
+  const pageStart = (_cdOrderPage - 1) * CD_ORDER_PAGE_SIZE;
+  const pageRows = rows.slice(pageStart, pageStart + CD_ORDER_PAGE_SIZE);
+
+  const filterNote = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:12px;color:var(--primary)">Filter: <b>${CD_FILTER_LABELS[_cdOverviewFilter]}</b> — showing ${rows.length} order(s)${_cdOverviewFilter!=='allOrders'?` <button onclick="setO2DFilter('allClients')" style="background:none;border:none;color:var(--primary);text-decoration:underline;cursor:pointer;font-size:12px;padding:0">clear filter</button>`:''}</div>`;
+
+  if (!rows.length) {
+    wrap.innerHTML = filterNote + '<div style="padding:30px;color:var(--muted-foreground);font-size:13px;text-align:center">No matching orders.</div>';
+    return;
+  }
+
+  const statusBadge = o => o.statusKey === 'completed'
+    ? `<span class="status-badge completed">Complete</span>`
+    : o.statusKey === 'pending'
+    ? `<span class="status-badge pending">In Process</span>`
+    : `<span class="status-badge" style="background:var(--muted);color:var(--muted-foreground)">${escapeHtml(o.fmsStatus||'—')}</span>`;
+
+  const pagerHtml = totalPages > 1 ? `
+    <div style="display:flex;align-items:center;justify-content:center;gap:12px;padding:12px 0">
+      <button class="btn btn-outline btn-sm" onclick="cdOrderPrevPage()" ${_cdOrderPage<=1?'disabled':''}>◀ Prev</button>
+      <span style="font-size:12px;color:var(--muted-foreground)">Page ${_cdOrderPage} of ${totalPages}</span>
+      <button class="btn btn-outline btn-sm" onclick="cdOrderNextPage()" ${_cdOrderPage>=totalPages?'disabled':''}>Next ▶</button>
+    </div>` : '';
+
+  wrap.innerHTML = filterNote + `
+    <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <thead><tr style="background:var(--muted)">
+          <th style="padding:9px 12px;text-align:left">Client Name</th>
+          <th style="padding:9px 12px;text-align:left">Unique ID</th>
+          <th style="padding:9px 12px;text-align:left">Order No</th>
+          <th style="padding:9px 12px;text-align:left">Order Type</th>
+          <th style="padding:9px 12px;text-align:center">No. Of Pcs</th>
+          <th style="padding:9px 12px;text-align:left">FMS Status</th>
+          <th style="padding:9px 12px;text-align:left">Order Status</th>
+          <th style="padding:9px 12px;text-align:left">Delivery Date</th>
+        </tr></thead>
+        <tbody>
+          ${pageRows.map(o => `<tr style="border-top:1px solid var(--muted)${o.isCancelled?';background:color-mix(in srgb,var(--destructive) 6%,transparent)':''}">
+            <td style="padding:7px 12px;white-space:nowrap;font-weight:600;color:var(--primary);text-decoration:underline;text-underline-offset:2px;cursor:pointer" onclick="openClientDetailByName('${o.clientName.replace(/'/g,"\\'")}')">${escapeHtml(o.clientName)}</td>
+            <td style="padding:7px 12px;white-space:nowrap">${escapeHtml(o.uniqueId)}</td>
+            <td style="padding:7px 12px;white-space:nowrap">${escapeHtml(o.orderNo)}</td>
+            <td style="padding:7px 12px;white-space:nowrap">${escapeHtml(o.orderType)}</td>
+            <td style="padding:7px 12px;text-align:center">${escapeHtml(o.pcs)||'—'}</td>
+            <td style="padding:7px 12px;white-space:nowrap">${statusBadge(o)}</td>
+            <td style="padding:7px 12px;white-space:nowrap${o.isCancelled?';color:var(--destructive);font-weight:600':''}">${escapeHtml(o.orderStatus)}</td>
+            <td style="padding:7px 12px;white-space:nowrap">${escapeHtml(o.deliveryDate)||'—'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    ${pagerHtml}`;
+}
+
+function cdOrderPrevPage() { if (_cdOrderPage > 1) { _cdOrderPage--; renderClientDashboardTable(); } }
+function cdOrderNextPage() { _cdOrderPage++; renderClientDashboardTable(); }
+
 // Client pe click → uski poori order list ek modal me, 1 click me "kya chal raha hai" dikhane ke liye.
 let _cdDetailClient = null;
 let _cdDetailFilter = 'all'; // all | delivery | bagging | pending | completed | cancelled
+
+// Orders-table me client ka naam click hua (idx nahi, naam pata hota hai yahan)
+function openClientDetailByName(name) {
+  const idx = _cdClients.findIndex(c => c.name === name);
+  if (idx >= 0) openClientDetail(idx);
+}
 
 function openClientDetail(idx) {
   const c = _cdClients[idx];
