@@ -109,7 +109,7 @@
     </div>
     <div class="nav-item" id="nav-client-dashboard" style="display:none" onclick="navigate('client-dashboard',this)">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2M19 21H5m0 0H3m9-13h1m-1 4h1m-5-4h1m-1 4h1m4 4h1m-5 0h1"/></svg>
-      <span class="nav-label-text">Client Dashboard</span>
+      <span class="nav-label-text">O2D Dashboard</span>
     </div>
     <div class="nav-item" id="nav-records" style="display:none" onclick="navigate('records',this)">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
@@ -2313,6 +2313,7 @@
   <div class="modal" style="max-width:920px;max-height:85vh;display:flex;flex-direction:column">
     <h3 id="cdDetailTitle">📋 Client Details</h3>
     <div id="cdDetailCards" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:14px;flex-shrink:0"></div>
+    <div id="cdDetailFilters" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;flex-shrink:0"></div>
     <div id="cdDetailTableWrap" style="overflow:auto;flex:1;min-height:0"></div>
     <div style="display:flex;justify-content:flex-end;margin-top:12px;flex-shrink:0">
       <button class="btn btn-outline" onclick="closeModal('clientDetailModal')">Close</button>

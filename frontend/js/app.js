@@ -432,7 +432,7 @@ function setMinDates() {
 // ══════════════════════════════════════════════════════
 // NAVIGATION
 // ══════════════════════════════════════════════════════
-const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',payments:'Payments',query:'Query','help-tickets':'Help Ticket',users:'Users',profile:'Profile',mis:'MIS Report',score360:'360° Score',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client',forms:'Forms','client-dashboard':'Client Dashboard'};
+const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',payments:'Payments',query:'Query','help-tickets':'Help Ticket',users:'Users',profile:'Profile',mis:'MIS Report',score360:'360° Score',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client',forms:'Forms','client-dashboard':'O2D Dashboard'};
 
 // Sidebar par cursor jaate hi (jab wo expand hone lagta hai) koi bhi khula dropdown
 // band kar do — warna native select popup sidebar ke upar overlap dikhta hai.
@@ -2804,9 +2804,14 @@ function renderClientDashboardTable() {
 }
 
 // Client pe click → uski poori order list ek modal me, 1 click me "kya chal raha hai" dikhane ke liye.
+let _cdDetailClient = null;
+let _cdDetailFilter = 'all'; // all | delivery | bagging | pending | completed | cancelled
+
 function openClientDetail(idx) {
   const c = _cdClients[idx];
   if (!c) return;
+  _cdDetailClient = c;
+  _cdDetailFilter = 'all';
   document.getElementById('cdDetailTitle').textContent = `📋 ${c.name}`;
 
   const card = (label, val, color) => `
@@ -2824,17 +2829,51 @@ function openClientDetail(idx) {
     card('Total Pcs', totalPcs, 'var(--chart-1)') +
     card('Delivery Date Recorded', c.delivered, 'var(--chart-1)');
 
-  // In-process (FMS 'Pending' — matlab order abhi process me hai, steps complete nahi
-  // hue) upar sorted, taaki turant dikhe kahan atka hai.
-  const orders = (c.orders || []).slice().sort((a, b) => (a.statusKey==='pending'?0:1) - (b.statusKey==='pending'?0:1));
+  document.getElementById('clientDetailModal').classList.add('open');
+  renderClientDetailTable();
+}
+
+// Filter chips — sirf un orders pe jump karne ke liye jahan us column me asal
+// me data bhara hai (Delivery Date aur Bagging quartet dono me saare orders
+// bhare nahi hote, isliye "jaha data ho waha dekh sakoon" wala filter).
+function setClientDetailFilter(f) {
+  _cdDetailFilter = f;
+  renderClientDetailTable();
+}
+
+function renderClientDetailTable() {
+  const c = _cdDetailClient;
+  if (!c) return;
+  const all = c.orders || [];
+  const hasDelivery = all.filter(o => o.deliveryDate);
+  const hasBagging = all.filter(o => o.pcsBaggingDone || o.balancePcs || o.pcsCancelRejected || o.baggingStatus);
+  const pendingOnly = all.filter(o => o.statusKey === 'pending');
+  const completedOnly = all.filter(o => o.statusKey === 'completed');
+  const cancelledOnly = all.filter(o => o.isCancelled);
+
+  const filterSets = { all, delivery: hasDelivery, bagging: hasBagging, pending: pendingOnly, completed: completedOnly, cancelled: cancelledOnly };
+  const orders = (filterSets[_cdDetailFilter] || all).slice()
+    .sort((a, b) => (a.statusKey==='pending'?0:1) - (b.statusKey==='pending'?0:1));
+
+  const chip = (key, label, count) => `
+    <button onclick="setClientDetailFilter('${key}')" style="padding:5px 12px;border-radius:999px;font-size:11.5px;font-weight:600;cursor:pointer;border:1.5px solid ${_cdDetailFilter===key?'var(--primary)':'var(--border)'};background:${_cdDetailFilter===key?'var(--primary)':'var(--card)'};color:${_cdDetailFilter===key?'var(--primary-foreground)':'var(--foreground)'}">${label} (${count})</button>`;
+  document.getElementById('cdDetailFilters').innerHTML =
+    chip('all', 'All', all.length) +
+    chip('delivery', '📅 Has Delivery Date', hasDelivery.length) +
+    chip('bagging', '📦 Has Bagging Data', hasBagging.length) +
+    chip('pending', 'In Process', pendingOnly.length) +
+    chip('completed', 'Completed', completedOnly.length) +
+    chip('cancelled', 'Cancelled', cancelledOnly.length);
+
   const statusBadge = o => o.statusKey === 'completed'
     ? `<span class="status-badge completed">Complete</span>`
     : o.statusKey === 'pending'
     ? `<span class="status-badge pending">In Process</span>`
     : `<span class="status-badge" style="background:var(--muted);color:var(--muted-foreground)">${escapeHtml(o.fmsStatus||'—')}</span>`;
 
-  document.getElementById('cdDetailTableWrap').innerHTML = `
-    <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+  document.getElementById('cdDetailTableWrap').innerHTML = !orders.length
+    ? '<div style="padding:30px;color:var(--muted-foreground);font-size:13px;text-align:center">No orders match this filter.</div>'
+    : `<table style="width:100%;border-collapse:collapse;font-size:12.5px">
       <thead><tr style="background:var(--muted);position:sticky;top:0">
         <th style="padding:8px 10px;text-align:left">Unique ID</th>
         <th style="padding:8px 10px;text-align:left">Order No</th>
@@ -2866,8 +2905,6 @@ function openClientDetail(idx) {
         </tr>`).join('')}
       </tbody>
     </table>`;
-
-  document.getElementById('clientDetailModal').classList.add('open');
 }
 
 // ══════════════════════════════════════════════════════
