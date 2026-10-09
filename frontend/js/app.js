@@ -2734,51 +2734,128 @@ async function deleteQuickForm(id) {
 // ══════════════════════════════════════════════════════
 let _cdClients = [];
 
+let _cdTotals = {};
+let _cdOverviewFilter = 'all'; // all | pending | completed | cancelled | delivered | clientsComplete | clientsPending
+let _o2dChartInst = null;
+
 async function loadClientDashboard() {
   const box = document.getElementById('clientDashboardContent');
   box.innerHTML = '<div style="padding:30px;color:var(--muted-foreground);font-size:13px;text-align:center">Loading from Google Sheet…</div>';
   const data = await api('/api/client-dashboard');
   if (data.error) { box.innerHTML = `<div style="padding:20px;color:var(--destructive)">${escapeHtml(data.error)}</div>`; return; }
   _cdClients = data.clients || [];
-  const t = data.totals || {};
-
-  const card = (label, val, color) => `
-    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px 18px">
-      <div style="font-size:11px;font-weight:600;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.3px">${label}</div>
-      <div style="font-size:26px;font-weight:700;color:${color||'var(--foreground)'};margin-top:4px">${val}</div>
-    </div>`;
+  _cdTotals = data.totals || {};
+  _cdOverviewFilter = 'all';
 
   box.innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px">
-      ${card('Total Orders', t.orders||0)}
-      ${card('Pending Orders', t.pendingOrders||0, 'var(--destructive)')}
-      ${card('Completed Orders', t.completedOrders||0, 'var(--success)')}
-      ${card('Cancelled Orders', t.cancelledOrders||0, 'var(--destructive)')}
-      ${card('Delivery Date Recorded', t.deliveredOrders||0, 'var(--chart-1)')}
-      ${card('Total Clients', t.totalClients||0)}
-      ${card('Clients — All Complete', t.clientsComplete||0, 'var(--success)')}
-      ${card('Clients — Has Pending', t.clientsPending||0, 'var(--warning)')}
+    <div id="cdCardsWrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px"></div>
+    <div class="chart-card" style="max-width:360px;margin-bottom:20px">
+      <h3>Order Status Breakdown</h3>
+      <div class="chart-wrap"><canvas id="o2dChart"></canvas></div>
+      <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:10px;font-size:11px;color:var(--muted-foreground)">
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:9px;height:9px;border-radius:50%;background:var(--success);display:inline-block"></span>Completed</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:9px;height:9px;border-radius:50%;background:var(--warning);display:inline-block"></span>In Process</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="width:9px;height:9px;border-radius:50%;background:var(--destructive);display:inline-block"></span>Cancelled</span>
+      </div>
     </div>
     <div style="position:relative;max-width:320px;margin-bottom:14px">
       <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted-foreground);font-size:13px">🔍</span>
       <input type="search" id="cdSearch" placeholder="Search client…" oninput="renderClientDashboardTable()" autocomplete="off" name="cd-search-query" readonly onfocus="this.removeAttribute('readonly')"
         style="width:100%;padding:8px 12px 8px 32px;border:1.5px solid var(--border);border-radius:8px;font-size:13px;font-family:'Inter',sans-serif;outline:none;box-sizing:border-box"/>
     </div>
-    <div style="font-size:11.5px;color:var(--muted-foreground);margin-bottom:8px">💡 Kisi bhi client pe click karo — uski poori order list (kaunsa pending, kaunsa complete) khul jayegi.</div>
+    <div style="font-size:11.5px;color:var(--muted-foreground);margin-bottom:8px">💡 Upar kisi bhi card (ya pie chart slice) pe click karo — sirf wahi clients niche dikhenge. Kisi client ke naam pe click karo — uski poori order list khul jayegi.</div>
     <div id="cdTableWrap"></div>`;
+
+  renderO2DCards();
+  renderO2DChart();
   renderClientDashboardTable();
+}
+
+// 8 summary cards — har ek clickable hai, click karte hi niche ki table sirf
+// usi filter ke clients dikhati hai (jaise 'Cancelled Orders' pe click to
+// sirf wo clients jinka koi order cancel hua ho). Dubara usi card pe click
+// karne se filter clear ho jaata hai.
+function renderO2DCards() {
+  const wrap = document.getElementById('cdCardsWrap');
+  if (!wrap) return;
+  const t = _cdTotals;
+  const card = (label, val, color, filterKey) => {
+    const active = filterKey && _cdOverviewFilter === filterKey;
+    return `<div ${filterKey ? `onclick="setO2DFilter('${filterKey}')"` : ''} style="background:var(--card);border-radius:12px;padding:16px 18px;box-sizing:border-box;${filterKey?'cursor:pointer;':''}border:1.5px solid ${active?'var(--primary)':'var(--border)'};${active?'box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 16%,transparent);':''}">
+      <div style="font-size:11px;font-weight:600;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.3px">${label}</div>
+      <div style="font-size:26px;font-weight:700;color:${color||'var(--foreground)'};margin-top:4px">${val}</div>
+    </div>`;
+  };
+  wrap.innerHTML =
+    card('Total Orders', t.orders||0, null, 'all') +
+    card('Pending Orders', t.pendingOrders||0, 'var(--warning)', 'pending') +
+    card('Completed Orders', t.completedOrders||0, 'var(--success)', 'completed') +
+    card('Cancelled Orders', t.cancelledOrders||0, 'var(--destructive)', 'cancelled') +
+    card('Delivery Date Recorded', t.deliveredOrders||0, 'var(--chart-1)', 'delivered') +
+    card('Total Clients', t.totalClients||0, null, 'all') +
+    card('Clients — All Complete', t.clientsComplete||0, 'var(--success)', 'clientsComplete') +
+    card('Clients — Has Pending', t.clientsPending||0, 'var(--warning)', 'clientsPending');
+}
+
+function setO2DFilter(key) {
+  _cdOverviewFilter = (_cdOverviewFilter === key) ? 'all' : key;
+  renderO2DCards();
+  renderClientDashboardTable();
+}
+
+function renderO2DChart() {
+  const canvas = document.getElementById('o2dChart');
+  if (!canvas || typeof Chart === 'undefined') return;
+  if (_o2dChartInst) _o2dChartInst.destroy();
+  const t = _cdTotals;
+  // Cancelled orders FMS Status me 'Complete' hi dikhte hain (process band
+  // hua matlab) — isliye pie me overlap na ho, Completed me se Cancelled
+  // nikaal ke "asli fulfil hue" dikhaya.
+  const trueCompleted = Math.max(0, (t.completedOrders||0) - (t.cancelledOrders||0));
+  const data = [trueCompleted, t.pendingOrders||0, t.cancelledOrders||0];
+  const keys = ['completed','pending','cancelled'];
+  _o2dChartInst = new Chart(canvas.getContext('2d'), {
+    type: 'pie',
+    data: {
+      labels: ['Completed','In Process','Cancelled'],
+      datasets: [{ data, backgroundColor: [cssVar('--success'), cssVar('--warning'), cssVar('--destructive')], borderWidth: 3, borderColor: cssVar('--card','#fff'), hoverOffset: 6 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.label}: ${c.raw}` } } },
+      onClick: (evt, els) => { if (els.length) setO2DFilter(keys[els[0].index]); }
+    }
+  });
+}
+
+function clientMatchesOverviewFilter(c) {
+  switch (_cdOverviewFilter) {
+    case 'pending': return c.pending > 0;
+    case 'completed': return c.completed > 0;
+    case 'cancelled': return c.cancelled > 0;
+    case 'delivered': return c.delivered > 0;
+    case 'clientsComplete': return c.pending === 0 && c.other === 0;
+    case 'clientsPending': return c.pending > 0 || c.other > 0;
+    default: return true;
+  }
 }
 
 function renderClientDashboardTable() {
   const wrap = document.getElementById('cdTableWrap');
   if (!wrap) return;
   const q = (document.getElementById('cdSearch')?.value || '').trim().toLowerCase();
-  const rows = !q ? _cdClients : _cdClients.filter(c => c.name.toLowerCase().includes(q));
+  let rows = _cdClients.filter(clientMatchesOverviewFilter);
+  if (q) rows = rows.filter(c => c.name.toLowerCase().includes(q));
+
+  const filterNote = _cdOverviewFilter !== 'all'
+    ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:12px;color:var(--primary)">Filtered — showing ${rows.length} client(s) <button onclick="setO2DFilter('all')" style="background:none;border:none;color:var(--primary);text-decoration:underline;cursor:pointer;font-size:12px;padding:0">clear filter</button></div>`
+    : '';
+
   if (!rows.length) {
-    wrap.innerHTML = '<div style="padding:30px;color:var(--muted-foreground);font-size:13px;text-align:center">No matching clients.</div>';
+    wrap.innerHTML = filterNote + '<div style="padding:30px;color:var(--muted-foreground);font-size:13px;text-align:center">No matching clients.</div>';
     return;
   }
-  wrap.innerHTML = `
+  wrap.innerHTML = filterNote + `
     <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px">
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead><tr style="background:var(--muted)">
