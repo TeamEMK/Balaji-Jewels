@@ -556,7 +556,8 @@
               ${O2D.lk.isAdmin ? `<button class="btn btn-outline btn-sm" style="color:var(--destructive)" onclick="O2D.delSmall('${tab}',${r.id})">Delete</button>` : ''}` },
         ], rows)}`;
     }
-    el.innerHTML = `<div class="tab-group" style="display:inline-flex;flex-wrap:wrap;margin-bottom:14px">${tabs.map(([k, l]) => `<div class="tab ${k === tab ? 'active' : ''}" onclick="O2D.open('masters',{tab:'${k}'})">${l}</div>`).join('')}</div>${body}`;
+    const demo = O2D.demoBar ? await O2D.demoBar() : '';
+    el.innerHTML = `${demo}<div class="tab-group" style="display:inline-flex;flex-wrap:wrap;margin-bottom:14px">${tabs.map(([k, l]) => `<div class="tab ${k === tab ? 'active' : ''}" onclick="O2D.open('masters',{tab:'${k}'})">${l}</div>`).join('')}</div>${body}`;
   };
   O2D.filterRows = (wrapId, q) => {
     q = (q || '').toLowerCase();
