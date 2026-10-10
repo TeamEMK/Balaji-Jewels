@@ -309,6 +309,8 @@ async function init() {
     if (ME.role === 'admin' || ME.role === 'hod' || ME.role === 'pc' || isHR()) {
       document.getElementById('nav-approvals').style.display = 'flex';
     }
+    // Order FMS — aaj/overdue follow-ups ka sidebar badge
+    if (window.O2D && O2D.refreshBadge) O2D.refreshBadge().catch(() => {});
     // Records tab temporarily disabled
     // Band kiye gaye features sidebar se hide — DISABLED_PAGES se control.
     // Ye role-wale blocks ke BAAD chalna zaroori hai, warna upar admin ke liye
@@ -432,7 +434,7 @@ function setMinDates() {
 // ══════════════════════════════════════════════════════
 // NAVIGATION
 // ══════════════════════════════════════════════════════
-const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',payments:'Payments',query:'Query','help-tickets':'Help Ticket',users:'Users',profile:'Profile',mis:'MIS Report',score360:'360° Score',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client',forms:'Forms','client-dashboard':'O2D Dashboard'};
+const pageTitles = {dashboard:'Dashboard',alltasks:'All Tasks','daily-task':'Daily Task',catalog:'Catalog',approvals:'Approvals',leaves:'Leave',payroll:'Payroll',payments:'Payments',query:'Query','help-tickets':'Help Ticket',users:'Users',profile:'Profile',mis:'MIS Report',score360:'360° Score',fms:'FMS Admin','fms-tasks':'FMS Tasks',records:'Employee Records',newcopy:'New Client Copy',updateclient:'Update Client',forms:'Forms','client-dashboard':'O2D Dashboard',o2d:'Order FMS'};
 
 // Sidebar par cursor jaate hi (jab wo expand hone lagta hai) koi bhi khula dropdown
 // band kar do — warna native select popup sidebar ke upar overlap dikhta hai.
@@ -526,6 +528,7 @@ function navigate(page, el) {
   if (page==='records') loadRecords();
   if (page==='forms') loadForms();
   if (page==='client-dashboard') loadClientDashboard();
+  if (page==='o2d' && window.loadO2D) loadO2D();
   // navigate() core app ka hissa hai, yaani client ki copy me bhi jaata hai —
   // par ncLoadLog generator ke markers ke andar hai aur wahan hota hi nahi.
   // Isliye seedha bulane ke bajaye pehle dekh lete hain ki function hai ya nahi.

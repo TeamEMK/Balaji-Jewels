@@ -1504,6 +1504,7 @@ require('./routes/payments')(app, ROUTE_CTX);
 require('./routes/gold-ledger')(app, ROUTE_CTX);
 require('./routes/forms')(app, ROUTE_CTX);
 require('./routes/client-dashboard')(app, ROUTE_CTX);
+require('./routes/o2d')(app, ROUTE_CTX); // Order-to-Dispatch FMS (spec v1.0) — /api/o2d/*
 
 // ══════════════════════════════════════════════════════
 // TASKS
