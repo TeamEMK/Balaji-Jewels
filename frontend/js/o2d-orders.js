@@ -60,6 +60,8 @@
         { key: 'days_in_stage', label: 'Days in stage', render: o => (o.days_in_stage == null || ['Closed', 'Cancelled', 'Draft'].includes(o.order_status) ? '—'
           : `<span style="color:${o.delayed_at_stage ? 'var(--destructive)' : 'inherit'};font-weight:${o.delayed_at_stage ? 700 : 400}">${o.days_in_stage}${o.stage_target ? ' / ' + o.stage_target : ''}</span>`) },
         { key: 'sales_person_name', label: 'Sales' },
+        ...(O2D.lk.isAdmin ? [{ key: 'del', label: '', render: o => `<button class="btn btn-outline btn-sm" title="Delete order" style="color:var(--destructive);border-color:color-mix(in srgb,var(--destructive) 40%,transparent)"
+          onclick="event.stopPropagation();O2D.act.deleteOrder(${o.id},'${h(o.order_no)}')">🗑 Delete</button>` }] : []),
       ], d.rows, { onRow: o => `O2D.open('order',{id:${o.id}})`, empty: 'No orders match these filters.' })}
       ${pages > 1 ? `<div style="display:flex;justify-content:center;gap:10px;align-items:center;margin-top:12px">
         <button class="btn btn-outline btn-sm" ${d.page <= 1 ? 'disabled' : ''} onclick="O2D.orderFilters.page=${d.page - 1};O2D.refresh()">◀ Prev</button>
@@ -279,7 +281,7 @@
     const latestCad = d.cad[d.cad.length - 1];
     if (st === 'Draft') {
       out.push(B('✏️ Edit', `O2D.open('orderForm',{id:${o.id}})`), B('🚀 Submit', `O2D.act.submit(${o.id})`, 'btn-primary'));
-      if (O2D.lk.isAdmin) out.push(B('🗑 Delete draft', `O2D.act.deleteOrder(${o.id})`));
+      if (O2D.lk.isAdmin) out.push(B('🗑 Delete order', `O2D.act.deleteOrder(${o.id},'${h(o.order_no)}')`));
       return out.join('');
     }
     if (o.current_stage === 'CAD' && (!latestCad || ['Cancelled'].includes(latestCad.cad_status)) && !term) out.push(B('🎨 Request CAD', `O2D.act.requestCad(${o.id})`, 'btn-primary'));
@@ -317,7 +319,7 @@
       else if (preProd) out.push(B('⏸ Hold', `O2D.act.hold(${o.id})`));
       out.push(B('✖ Cancel order', `O2D.act.cancel(${o.id})`));
     }
-    if (O2D.lk.isAdmin) out.push(B('⚙ Change status', `O2D.act.override(${o.id})`));
+    if (O2D.lk.isAdmin) out.push(B('⚙ Change status', `O2D.act.override(${o.id})`), B('🗑 Delete order', `O2D.act.deleteOrder(${o.id},'${h(o.order_no)}')`));
     return out.join('');
   }
 
@@ -503,11 +505,16 @@
   const joinReason = (v) => [v.reason_pick, v.reason].filter(Boolean).join(' — ');
 
   act.submit = (id) => simple(`/api/o2d/orders/${id}/submit`, 'POST', {}, 'Order submitted');
-  act.deleteOrder = async (id) => {
-    if (!await confirmDialog('Delete this draft order?', { title: 'Delete draft', okText: 'Delete', danger: true })) return;
+  // Poora order system se mit jaata hai — CAD, bagging, vendor, hallmark/lab,
+  // invoice, follow-ups, files, history sab. Wapas nahi aata.
+  act.deleteOrder = async (id, orderNo) => {
+    const msg = `Order ${orderNo || ''} will be permanently deleted from the system — along with its CAD, bagging, vendor issue/receipt, `
+      + 'hallmark/lab, invoice, follow-ups, files and history. Money already received stays with the customer as on-account. This cannot be undone.';
+    if (!await confirmDialog(msg, { title: `Delete order ${orderNo || ''}?`, okText: 'Yes, delete', danger: true })) return;
     const r = await api(`/api/o2d/orders/${id}`, 'DELETE');
     if (r.error) return showToast(r.error, 'error');
-    showToast('Draft deleted'); O2D.open('orders');
+    showToast(`Order ${r.order_no} deleted`); O2D.refreshBadge();
+    if (O2D.state.view === 'orders') O2D.refresh(); else O2D.open('orders');
   };
   act.cancel = (id) => O2D.formModal({
     title: 'Cancel order', submitText: 'Cancel order', danger: true, width: 480, fields: reasonFields('Details'),

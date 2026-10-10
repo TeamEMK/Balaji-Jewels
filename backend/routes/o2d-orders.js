@@ -327,11 +327,83 @@ module.exports = function registerO2DOrders(app, ctx) {
     res.json({ success: true });
   }));
 
+  // Order poori tarah mitao (admin) — order ke saath uski har stage ki entry,
+  // files, logs aur follow-ups bhi. Shared invoice / vendor voucher ke header
+  // tabhi hatte hain jab unme koi aur order na bache; bache to totals dobara.
   app.delete('/api/o2d/orders/:id', requireAuth, requireAdmin, wrap(async (req, res) => {
-    const o = await getOrder(db, int(req.params.id));
-    if (o.order_status !== S.DRAFT) fail('Only Draft orders can be deleted — cancel it instead');
-    await db.query('UPDATE fms_orders SET is_deleted=1, updated_at=?, updated_by=? WHERE id=?', [nowIST(), req.session.userId, o.id]);
-    res.json({ success: true });
+    const id = int(req.params.id);
+    const out = await withTx(db, async (q) => {
+      const [or] = await q.query('SELECT id, order_no FROM fms_orders WHERE id=?', [id]);
+      if (!or[0]) fail('Order not found', 404);
+      const ids = async (sql, p) => (await q.query(sql, p))[0].map(r => r.id);
+      const inList = (arr) => arr.map(() => '?').join(',');
+
+      // Invoice: sirf isi order ka ho tabhi mitega; doosre orders bhi hon to rok do
+      const [dl] = await q.query('SELECT DISTINCT dispatch_id FROM fms_dispatch_line WHERE order_id=?', [id]);
+      const dispatchIds = dl.map(r => r.dispatch_id);
+      if (dispatchIds.length) {
+        const [shared] = await q.query(
+          `SELECT d.invoice_no FROM fms_dispatch d WHERE d.id IN (${inList(dispatchIds)})
+             AND EXISTS (SELECT 1 FROM fms_dispatch_line x WHERE x.dispatch_id=d.id AND x.order_id<>? AND x.is_deleted=0)`, [...dispatchIds, id]);
+        if (shared[0]) fail(`Invoice ${shared[0].invoice_no} also covers other orders — this order cannot be deleted on its own`);
+      }
+
+      // Follow-ups (order ke, aur is order ke invoice ke)
+      const taskIds = await ids(
+        `SELECT id FROM fms_followup_task WHERE order_id=?${dispatchIds.length ? ` OR (ref_table='fms_dispatch' AND ref_id IN (${inList(dispatchIds)}))` : ''}`,
+        [id, ...dispatchIds]);
+      if (taskIds.length) {
+        await q.query(`DELETE FROM fms_followup_log WHERE task_id IN (${inList(taskIds)})`, taskIds);
+        await q.query(`DELETE FROM fms_followup_task WHERE id IN (${inList(taskIds)})`, taskIds);
+      }
+
+      // Dispatch + payment allocations; receipt ka paisa customer ke on-account me rehta hai
+      if (dispatchIds.length) {
+        const [rc] = await q.query(
+          `SELECT receipt_id FROM fms_payment_allocation WHERE dispatch_id IN (${inList(dispatchIds)})
+           UNION SELECT receipt_id FROM fms_payment_category_allocation WHERE dispatch_id IN (${inList(dispatchIds)})`, [...dispatchIds, ...dispatchIds]);
+        await q.query(`DELETE FROM fms_payment_allocation WHERE dispatch_id IN (${inList(dispatchIds)})`, dispatchIds);
+        await q.query(`DELETE FROM fms_payment_category_allocation WHERE dispatch_id IN (${inList(dispatchIds)})`, dispatchIds);
+        for (const { receipt_id: rid } of rc) {
+          const [a] = await q.query(
+            `SELECT (SELECT COALESCE(SUM(allocated_amount),0) FROM fms_payment_allocation WHERE receipt_id=? AND is_deleted=0)
+                  + (SELECT COALESCE(SUM(allocated_amount),0) FROM fms_payment_category_allocation WHERE receipt_id=? AND is_deleted=0) AS s`, [rid, rid]);
+          await q.query('UPDATE fms_payment_receipt SET on_account_amount=amount_received-? WHERE id=?', [num(a[0].s), rid]);
+        }
+        await q.query(`DELETE FROM fms_order_files WHERE ref_table='fms_dispatch' AND ref_id IN (${inList(dispatchIds)})`, dispatchIds);
+        await q.query(`DELETE FROM fms_dispatch_line WHERE dispatch_id IN (${inList(dispatchIds)})`, dispatchIds);
+        await q.query(`DELETE FROM fms_dispatch WHERE id IN (${inList(dispatchIds)})`, dispatchIds);
+      }
+
+      // Vendor issue / receipt lines; khaali header hatao, baaki ke totals dobara
+      const [il] = await q.query('SELECT DISTINCT issue_id FROM fms_vendor_issue_line WHERE order_id=?', [id]);
+      const [rl] = await q.query('SELECT DISTINCT receipt_id FROM fms_vendor_receipt_line WHERE order_id=?', [id]);
+      await q.query('DELETE FROM fms_vendor_receipt_line WHERE order_id=?', [id]);
+      await q.query('DELETE FROM fms_vendor_issue_line WHERE order_id=?', [id]);
+      for (const { issue_id: iid } of il) {
+        const [s] = await q.query('SELECT COUNT(*) AS n, COALESCE(SUM(issued_pcs),0) AS pcs, COALESCE(SUM(issued_weight_gm),0) AS wt FROM fms_vendor_issue_line WHERE issue_id=? AND is_deleted=0', [iid]);
+        if (!int(s[0].n)) await q.query('DELETE FROM fms_vendor_issue WHERE id=?', [iid]);
+        else await q.query('UPDATE fms_vendor_issue SET total_pcs=?, total_weight=? WHERE id=?', [int(s[0].pcs), num(s[0].wt), iid]);
+      }
+      for (const { receipt_id: rid } of rl) {
+        const [s] = await q.query('SELECT COUNT(*) AS n FROM fms_vendor_receipt_line WHERE receipt_id=?', [rid]);
+        if (!int(s[0].n)) await q.query('DELETE FROM fms_vendor_receipt WHERE id=?', [rid]);
+      }
+
+      // Bagging, short-material requirements, CAD, hallmark, lab
+      const reqIds = await ids('SELECT id FROM fms_requirement WHERE order_id=?', [id]);
+      if (reqIds.length) await q.query(`DELETE FROM fms_requirement_receipt WHERE requirement_id IN (${inList(reqIds)})`, reqIds);
+      await q.query('DELETE FROM fms_requirement WHERE order_id=?', [id]);
+      const bagIds = await ids('SELECT id FROM fms_bagging WHERE order_id=?', [id]);
+      if (bagIds.length) await q.query(`DELETE FROM fms_bagging_entry WHERE bagging_id IN (${inList(bagIds)})`, bagIds);
+      for (const t of ['fms_bagging', 'fms_cad', 'fms_hallmark', 'fms_lab_certificate', 'fms_order_files',
+        'fms_order_diamond_lines', 'fms_order_status_log', 'fms_order_change_log']) {
+        await q.query(`DELETE FROM ${t} WHERE order_id=?`, [id]);
+      }
+      await q.query('DELETE FROM fms_orders WHERE id=?', [id]);
+      return { order_no: or[0].order_no, invoices: dispatchIds.length };
+    });
+    res.json({ success: true, ...out });
   }));
 
   // Bagging doer ne "details galat hain" bola tha — order desk theek karke yahan se waapas bhejta hai.
