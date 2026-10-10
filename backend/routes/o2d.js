@@ -26,5 +26,4 @@ module.exports = function registerO2DRoutes(app, ctx) {
   require('./o2d-production')(app, shared);
   require('./o2d-sales')(app, shared);
   require('./o2d-reports')(app, shared);
-  require('./o2d-demo')(app, shared);
 };

@@ -334,8 +334,7 @@ module.exports = function registerO2DOrders(app, ctx) {
     const out = await withTx(db, (q) => hardDeleteOrder(q, int(req.params.id)));
     res.json({ success: true, ...out });
   }));
-  // allowShared: demo data hatate waqt — poora invoice (saare orders same demo customer ke) mitta hai
-  async function hardDeleteOrder(q, id, { allowShared = false } = {}) {
+  async function hardDeleteOrder(q, id) {
     const [or] = await q.query('SELECT id, order_no FROM fms_orders WHERE id=?', [id]);
     if (!or[0]) fail('Order not found', 404);
     const ids = async (sql, p) => (await q.query(sql, p))[0].map(r => r.id);
@@ -344,7 +343,7 @@ module.exports = function registerO2DOrders(app, ctx) {
     // Invoice: sirf isi order ka ho tabhi mitega; doosre orders bhi hon to rok do
     const [dl] = await q.query('SELECT DISTINCT dispatch_id FROM fms_dispatch_line WHERE order_id=?', [id]);
     const dispatchIds = dl.map(r => r.dispatch_id);
-    if (dispatchIds.length && !allowShared) {
+    if (dispatchIds.length) {
       const [shared] = await q.query(
         `SELECT d.invoice_no FROM fms_dispatch d WHERE d.id IN (${inList(dispatchIds)})
            AND EXISTS (SELECT 1 FROM fms_dispatch_line x WHERE x.dispatch_id=d.id AND x.order_id<>? AND x.is_deleted=0)`, [...dispatchIds, id]);
@@ -406,7 +405,6 @@ module.exports = function registerO2DOrders(app, ctx) {
     await q.query('DELETE FROM fms_orders WHERE id=?', [id]);
     return { order_no: or[0].order_no, invoices: dispatchIds.length };
   }
-  ctx.o2dHardDeleteOrder = hardDeleteOrder;
 
   // Bagging doer ne "details galat hain" bola tha — order desk theek karke yahan se waapas bhejta hai.
   app.post('/api/o2d/orders/:id/resolve-query', requireAuth, wrap(async (req, res) => {
