@@ -556,7 +556,28 @@
               ${O2D.lk.isAdmin ? `<button class="btn btn-outline btn-sm" style="color:var(--destructive)" onclick="O2D.delSmall('${tab}',${r.id})">Delete</button>` : ''}` },
         ], rows)}`;
     }
-    el.innerHTML = `<div class="tab-group" style="display:inline-flex;flex-wrap:wrap;margin-bottom:14px">${tabs.map(([k, l]) => `<div class="tab ${k === tab ? 'active' : ''}" onclick="O2D.open('masters',{tab:'${k}'})">${l}</div>`).join('')}</div>${body}`;
+    let demo = '';
+    if (O2D.lk.isAdmin) {
+      const dm = await api('/api/o2d/demo');
+      demo = `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--muted);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12.5px">
+        <div>🧪 <b>Demo data</b> — ${dm.loaded ? '6 demo orders are loaded (clients / vendors starting with "DEMO - ").' : 'load 6 sample orders at different stages to try the system.'}</div>
+        ${dm.loaded ? '<button class="btn btn-outline btn-sm" style="color:var(--destructive)" onclick="O2D.demo(false)">🗑 Remove demo data</button>'
+          : '<button class="btn btn-primary btn-sm" onclick="O2D.demo(true)">+ Load demo data (6 orders)</button>'}</div>`;
+    }
+    el.innerHTML = `${demo}<div class="tab-group" style="display:inline-flex;flex-wrap:wrap;margin-bottom:14px">${tabs.map(([k, l]) => `<div class="tab ${k === tab ? 'active' : ''}" onclick="O2D.open('masters',{tab:'${k}'})">${l}</div>`).join('')}</div>${body}`;
+  };
+  O2D.demo = async (load) => {
+    const ok = await confirmDialog(load
+      ? 'This adds 2 demo clients, 4 demo vendors and 6 demo orders (CAD, approval, quotation, bagging, at vendor, dispatched + part paid). You can remove them later from here.'
+      : 'All demo clients, vendors and their orders, invoices, payments and follow-ups will be permanently deleted. Your real data is not touched.',
+    { title: load ? 'Load demo data?' : 'Remove demo data?', okText: load ? 'Load' : 'Yes, remove', danger: !load });
+    if (!ok) return;
+    showToast(load ? 'Creating demo orders…' : 'Removing demo data…');
+    const r = await api('/api/o2d/demo', load ? 'POST' : 'DELETE');
+    if (r.error) return showToast(r.error, 'error');
+    showToast(load ? `Demo data loaded — ${r.orders.length} orders` : `Demo data removed (${r.orders} orders)`);
+    await O2D.loadLookups(true); O2D.refreshBadge();
+    if (load) { O2D.orderFilters = { page: 1 }; O2D.open('orders'); } else O2D.open('masters', { tab: 'customers' });
   };
   O2D.filterRows = (wrapId, q) => {
     q = (q || '').toLowerCase();
